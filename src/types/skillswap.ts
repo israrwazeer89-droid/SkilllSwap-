@@ -6,6 +6,7 @@ export interface UserProfile {
   uid: string;
   displayName: string;
   photoURL: string;
+  city: string;
   country: string;
   bio: string;
   teachSkills: string[];
@@ -13,6 +14,14 @@ export interface UserProfile {
   experienceLevel: ExperienceLevel;
   languages: string[];
   availability: string;
+  xp: number;
+  streakDays: number;
+  lastActiveDate: string;
+  hoursLearned: number;
+  hoursTaught: number;
+  badges: string[];
+  weeklyActivity: number[];
+  emailVerified: boolean;
   ratingAvg: number;
   ratingCount: number;
   completedExchanges: number;
@@ -166,9 +175,60 @@ export type AssistantMode =
 
 export type WorkspaceTab =
   | "dashboard"
+  | "profile"
   | "explore"
+  | "practice"
+  | "leaderboard"
   | "exchanges"
   | "messages"
   | "assistant"
-  | "profile"
   | "admin";
+
+export type ExploreCategory =
+  | "All"
+  | "Learners"
+  | "Programmers"
+  | "Graphic Designers"
+  | "Video Editors"
+  | "English Speakers"
+  | "Musicians"
+  | "More";
+
+export interface NoteItem {
+  id: string;
+  userId: string;
+  title: string;
+  text: string;
+  skillTag: string;
+  noteDate: string;
+  createdAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
+}
+
+export interface PracticeQuestion {
+  prompt: string;
+  options: [string, string, string, string];
+  correctIndex: number;
+  explanation: string;
+}
+
+export interface PracticeQuiz {
+  id: string;
+  title: string;
+  category: string;
+  exploreCategory: ExploreCategory;
+  description: string;
+  questions: PracticeQuestion[];
+}
+
+export interface PracticeAttempt {
+  id: string;
+  userId: string;
+  quizId: string;
+  quizTitle: string;
+  category: string;
+  score: number;
+  totalQuestions: number;
+  xpEarned: number;
+  createdAt?: Timestamp | null;
+}

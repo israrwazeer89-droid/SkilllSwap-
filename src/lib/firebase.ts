@@ -6,6 +6,7 @@ import {
   getFirestore,
   initializeFirestore,
   type Firestore,
+  type FirestoreSettings,
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import firebaseConfig from "../../firebase-applet-config.json";
@@ -19,7 +20,10 @@ function initDb(): Firestore {
   try {
     return initializeFirestore(
       app,
-      { experimentalAutoDetectLongPolling: true },
+      {
+        experimentalForceLongPolling: true,
+        useFetchStreams: false,
+      } as FirestoreSettings,
       firebaseConfig.firestoreDatabaseId
     );
   } catch {
@@ -31,6 +35,8 @@ export const db = initDb();
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope("email");
+googleProvider.addScope("profile");
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
 export async function testConnection(): Promise<void> {
@@ -38,9 +44,12 @@ export async function testConnection(): Promise<void> {
     await getDocFromServer(doc(db, "test", "connection"));
   } catch (error) {
     if (error instanceof Error && error.message.includes("the client is offline")) {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        return;
+      }
       // Retry once after brief delay in case initial cold-start handshake timed out
       try {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 2500));
         await getDocFromServer(doc(db, "test", "connection"));
       } catch (retryError) {
         if (

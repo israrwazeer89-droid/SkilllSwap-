@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   ArrowLeftRight,
   Bell,
   BookOpen,
   Compass,
+  Dumbbell,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -12,6 +14,7 @@ import {
   RefreshCw,
   Shield,
   Sun,
+  Trophy,
   User as UserIcon,
   X,
 } from "lucide-react";
@@ -23,12 +26,16 @@ import { handleFirestoreError, OperationType } from "../lib/firestoreError";
 import {
   markAllNotificationsRead,
   markNotificationRead,
+  syncPendingExchangeXp,
 } from "../lib/firestoreService";
+import { normalizeUserProfile } from "../lib/gamification";
 import type {
   AiMatch,
   Conversation,
   ExchangeRequest,
+  NoteItem,
   NotificationItem,
+  PracticeAttempt,
   Review,
   UserProfile,
   WorkspaceTab,
@@ -38,6 +45,7 @@ import { AiLearningAssistantView } from "./AiLearningAssistantView";
 import { Avatar } from "./Avatar";
 import { ExchangesView } from "./ExchangesView";
 import { ExploreAndMatchView } from "./ExploreAndMatchView";
+import { LeaderboardView } from "./LeaderboardView";
 import { MessagesView } from "./MessagesView";
 import {
   getNotificationMeta,
@@ -46,28 +54,38 @@ import {
 } from "./NotificationAlerts";
 import { OnboardingModal } from "./OnboardingModal";
 import { OverviewDashboard } from "./OverviewDashboard";
-import { ProfileView } from "./ProfileView";
+import { PracticeView } from "./PracticeView";
+import { ProfilePageView } from "./ProfilePageView";
 
 interface WorkspaceShellProps {
   initialTab?: WorkspaceTab;
+  initialProfileUid?: string | null;
   children?: React.ReactNode;
 }
 
 export function WorkspaceShell({
   initialTab = "dashboard",
+  initialProfileUid = null,
   children,
 }: WorkspaceShellProps = {}) {
   const {
     user,
     profile,
     isAdmin,
+    isVerified,
     resendVerificationEmail,
     refreshAuthUser,
     logout,
   } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(
+    initialProfileUid ? "profile" : initialTab
+  );
+  const [viewedProfileUid, setViewedProfileUid] = useState<string | null>(
+    initialProfileUid
+  );
+  const [selectedQuizId, setSelectedQuizId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -81,11 +99,37 @@ export function WorkspaceShell({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [matches, setMatches] = useState<AiMatch[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [notes, setNotes] = useState<NoteItem[]>([]);
+  const [practiceAttempts, setPracticeAttempts] = useState<PracticeAttempt[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [activeAlerts, setActiveAlerts] = useState<NotificationItem[]>([]);
   const [listenerError, setListenerError] = useState<Error | null>(null);
+  const [workspaceRetryKey, setWorkspaceRetryKey] = useState(0);
   const seenNotifIdsRef = useRef<Set<string>>(new Set());
   const initializedNotifsRef = useRef(false);
+  const syncingXpRef = useRef(false);
+
+  // Sync browser URL changes (/profile/[userId]) via popstate
+  useEffect(() => {
+    const handlePopState = () => {
+      const m = window.location.pathname.match(/^\/profile\/([a-zA-Z0-9_-]+)$/);
+      if (m) {
+        setViewedProfileUid(m[1]);
+        setActiveTab("profile");
+      } else {
+        setViewedProfileUid(null);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (initialProfileUid) {
+      setViewedProfileUid(initialProfileUid);
+      setActiveTab("profile");
+    }
+  }, [initialProfileUid]);
 
   useEffect(() => {
     if (!user) return;
@@ -109,7 +153,12 @@ export function WorkspaceShell({
     );
     const unsubPeers = onSnapshot(
       qPeers,
-      (snap) => setPeers(snap.docs.map((d) => d.data() as UserProfile)),
+      (snap) =>
+        setPeers(
+          snap.docs.map((d) =>
+            normalizeUserProfile(d.data() as Partial<UserProfile> & { uid: string })
+          )
+        ),
       (err) => reportListenerError(err, OperationType.LIST, "users")
     );
 
@@ -169,6 +218,39 @@ export function WorkspaceShell({
       (err) => reportListenerError(err, OperationType.LIST, "reviews")
     );
 
+    const qNotes = query(collection(db, "notes"), where("userId", "==", user.uid));
+    const unsubNotes = onSnapshot(
+      qNotes,
+      (snap) => {
+        const list = snap.docs
+          .map((d) => d.data() as NoteItem)
+          .sort(
+            (a, b) =>
+              (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0)
+          );
+        setNotes(list);
+      },
+      (err) => reportListenerError(err, OperationType.LIST, "notes")
+    );
+
+    const qPractice = query(
+      collection(db, "practiceAttempts"),
+      where("userId", "==", user.uid)
+    );
+    const unsubPractice = onSnapshot(
+      qPractice,
+      (snap) => {
+        const list = snap.docs
+          .map((d) => d.data() as PracticeAttempt)
+          .sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0)
+          );
+        setPracticeAttempts(list);
+      },
+      (err) => reportListenerError(err, OperationType.LIST, "practiceAttempts")
+    );
+
     const qNotifs = query(collection(db, "notifications"), where("userId", "==", user.uid));
     const unsubNotifs = onSnapshot(
       qNotifs,
@@ -211,13 +293,33 @@ export function WorkspaceShell({
       unsubConvs();
       unsubMatches();
       unsubReviews();
+      unsubNotes();
+      unsubPractice();
       unsubNotifs();
     };
-  }, [user?.uid]);
+  }, [user?.uid, workspaceRetryKey]);
 
-  if (listenerError) {
-    throw listenerError;
-  }
+  // Automatically credit +50 XP to the partner when the other user completes an exchange
+  useEffect(() => {
+    if (!profile || !isVerified || profile.isSuspended || syncingXpRef.current) return;
+    const completedCount = exchanges.filter((e) => e.status === "completed").length;
+    if (completedCount > (profile.completedExchanges || 0)) {
+      syncingXpRef.current = true;
+      void syncPendingExchangeXp(profile)
+        .catch(() => {
+          // Handled safely; avoid tight retry loops
+        })
+        .finally(() => {
+          syncingXpRef.current = false;
+        });
+    }
+  }, [exchanges, profile, isVerified]);
+
+  const workspaceError = listenerError ? listenerError.message : null;
+  const handleRetryWorkspace = () => {
+    setListenerError(null);
+    setWorkspaceRetryKey((k) => k + 1);
+  };
 
   useEffect(() => {
     if (activeAlerts.length === 0) return;
@@ -228,6 +330,29 @@ export function WorkspaceShell({
   }, [activeAlerts]);
 
   if (!user) return null;
+
+  const openProfile = (uid: string) => {
+    setViewedProfileUid(uid);
+    setActiveTab("profile");
+    setSidebarOpen(false);
+    const targetPath = `/profile/${uid}`;
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, "", targetPath);
+    }
+  };
+
+  const navigateTab = (tab: WorkspaceTab) => {
+    setSidebarOpen(false);
+    if (tab === "profile") {
+      openProfile(user.uid);
+      return;
+    }
+    setViewedProfileUid(null);
+    setActiveTab(tab);
+    if (window.location.pathname.startsWith("/profile/")) {
+      window.history.pushState(null, "", "/");
+    }
+  };
 
   const pendingIncoming = exchanges.filter(
     (e) => e.status === "pending" && e.toUid === user.uid
@@ -242,7 +367,10 @@ export function WorkspaceShell({
     badge?: number;
   }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "explore", label: "Explore & Match", icon: Compass },
+    { id: "profile", label: "My Profile", icon: UserIcon },
+    { id: "explore", label: "Explore People", icon: Compass },
+    { id: "practice", label: "Practice", icon: Dumbbell },
+    { id: "leaderboard", label: "Leaderboard", icon: Trophy },
     {
       id: "exchanges",
       label: "Exchanges",
@@ -256,39 +384,41 @@ export function WorkspaceShell({
       badge: unreadChats || undefined,
     },
     { id: "assistant", label: "AI Assistant", icon: BookOpen },
-    { id: "profile", label: "Profile & Safety", icon: UserIcon },
   ];
 
   if (isAdmin) {
     navItems.push({ id: "admin", label: "Admin Console", icon: Shield });
   }
 
-  const activeLabel = navItems.find((n) => n.id === activeTab)?.label || "Dashboard";
+  const activeLabel =
+    activeTab === "profile" && viewedProfileUid && viewedProfileUid !== user.uid
+      ? "Peer Profile"
+      : navItems.find((n) => n.id === activeTab)?.label || "Dashboard";
 
   const handleNotificationClick = async (n: NotificationItem) => {
     setActiveAlerts((prev) => prev.filter((a) => a.id !== n.id));
-    if (!n.isRead && user.emailVerified) {
+    if (!n.isRead && isVerified) {
       await markNotificationRead(n.id);
     }
     setNotifOpen(false);
     if (n.type === "new_match") {
-      setActiveTab("explore");
+      navigateTab("explore");
     } else if (n.type === "new_message" && n.relatedId) {
       setSelectedConversationId(n.relatedId);
-      setActiveTab("messages");
+      navigateTab("messages");
     } else if (
       n.type === "exchange_request" ||
       n.type === "exchange_accepted" ||
       n.type === "exchange_completed"
     ) {
-      setActiveTab("exchanges");
+      navigateTab("exchanges");
     } else if (n.type === "new_review") {
-      setActiveTab("profile");
+      navigateTab("profile");
     }
   };
 
   const handleMarkAllRead = async () => {
-    if (!user.emailVerified) return;
+    if (!isVerified) return;
     const unreadIds = notifications.filter((n) => !n.isRead).map((n) => n.id);
     setActiveAlerts([]);
     await markAllNotificationsRead(unreadIds);
@@ -334,7 +464,7 @@ export function WorkspaceShell({
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div>
+        <div className="overflow-y-auto">
           <div className="h-16 px-5 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
             <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-white font-display">
               SkillSwap
@@ -351,16 +481,16 @@ export function WorkspaceShell({
           <nav className="p-3 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const active = activeTab === item.id;
+              const active =
+                item.id === "profile"
+                  ? activeTab === "profile" && (!viewedProfileUid || viewedProfileUid === user.uid)
+                  : activeTab === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
                   aria-current={active ? "page" : undefined}
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setSidebarOpen(false);
-                  }}
+                  onClick={() => navigateTab(item.id)}
                   className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                     active
                       ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300"
@@ -383,19 +513,25 @@ export function WorkspaceShell({
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
-          {profile && (
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Avatar src={profile.photoURL} name={profile.displayName} size="sm" />
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                  {profile.displayName}
-                </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                  {profile.country}
-                </p>
-              </div>
+          <button
+            type="button"
+            onClick={() => openProfile(user.uid)}
+            className="w-full flex items-center gap-2.5 min-w-0 text-left hover:opacity-85 transition-opacity"
+          >
+            <Avatar
+              src={profile?.photoURL || user.photoURL || ""}
+              name={profile?.displayName || user.displayName || "My Profile"}
+              size="sm"
+            />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                {profile?.displayName || user.displayName || "My Profile"}
+              </p>
+              <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate tabular-nums">
+                {profile ? `${profile.xp} XP · ${profile.city || profile.country}` : "Setup Profile"}
+              </p>
             </div>
-          )}
+          </button>
 
           <button
             type="button"
@@ -456,19 +592,25 @@ export function WorkspaceShell({
               )}
             </button>
 
-            {profile && (
-              <button
-                type="button"
-                onClick={() => setActiveTab("profile")}
-                aria-label="Open profile settings"
-                className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
-              >
-                <Avatar src={profile.photoURL} name={profile.displayName} size="sm" />
-                <span className="hidden sm:inline text-xs font-medium text-slate-800 dark:text-slate-200 max-w-[120px] truncate">
-                  {profile.displayName}
-                </span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => openProfile(user.uid)}
+              aria-label="Open my profile"
+              className={`flex items-center gap-2 pl-1.5 pr-2.5 py-1 rounded-lg border transition-colors ${
+                activeTab === "profile"
+                  ? "border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300"
+                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-200"
+              }`}
+            >
+              <Avatar
+                src={profile?.photoURL || user.photoURL || ""}
+                name={profile?.displayName || user.displayName || "My Profile"}
+                size="sm"
+              />
+              <span className="hidden sm:inline text-xs font-medium max-w-[120px] truncate">
+                {profile?.displayName || "My Profile"}
+              </span>
+            </button>
 
             {notifOpen && (
               <div className="absolute right-0 top-12 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg p-3 z-50 space-y-2 max-h-96 overflow-y-auto">
@@ -477,7 +619,7 @@ export function WorkspaceShell({
                     Notifications ({unreadNotifs} unread)
                   </span>
                   <div className="flex items-center gap-3">
-                    {unreadNotifs > 0 && user.emailVerified && (
+                    {unreadNotifs > 0 && isVerified && (
                       <button
                         type="button"
                         onClick={handleMarkAllRead}
@@ -539,13 +681,13 @@ export function WorkspaceShell({
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-          {/* Email Verification Gate Banner for Email/Password signups */}
-          {!user.emailVerified && (
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-24 lg:pb-8 space-y-6">
+          {/* Email Verification Gate Banner for Email/Password signups only */}
+          {!isVerified && (
             <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
                 <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                  Verify your email address to activate profile & exchanges
+                  Verify your email address to activate profile &amp; exchanges
                 </p>
                 <p className="text-xs text-amber-800 dark:text-amber-300">
                   We sent a verification link to {user.email}. Click the link in your inbox,
@@ -587,6 +729,26 @@ export function WorkspaceShell({
             </div>
           )}
 
+          {workspaceError && activeTab !== "dashboard" && (
+            <div
+              role="alert"
+              className="p-4 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            >
+              <div className="flex items-start gap-2.5 text-xs text-red-700 dark:text-red-300">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Unable to sync live workspace updates. Check your connection and retry.</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRetryWorkspace}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0 self-start sm:self-auto"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry
+              </button>
+            </div>
+          )}
+
           <div className="w-full" data-testid="workspace-outlet">
             {children ? (
               children
@@ -599,7 +761,27 @@ export function WorkspaceShell({
                     conversations={conversations}
                     matches={matches}
                     reviews={reviews}
-                    onNavigate={setActiveTab}
+                    practiceAttempts={practiceAttempts}
+                    workspaceError={workspaceError}
+                    onRetryWorkspace={handleRetryWorkspace}
+                    onNavigate={navigateTab}
+                    onSelectConversation={(id) => setSelectedConversationId(id)}
+                    onStartPractice={(quizId) => {
+                      setSelectedQuizId(quizId || null);
+                      navigateTab("practice");
+                    }}
+                    onOpenProfile={openProfile}
+                  />
+                )}
+
+                {activeTab === "profile" && (
+                  <ProfilePageView
+                    viewedUserId={viewedProfileUid || user.uid}
+                    peers={peers}
+                    reviews={reviews}
+                    notes={notes}
+                    practiceAttempts={practiceAttempts}
+                    onNavigate={navigateTab}
                     onSelectConversation={(id) => setSelectedConversationId(id)}
                   />
                 )}
@@ -609,8 +791,27 @@ export function WorkspaceShell({
                     peers={peers}
                     matches={matches}
                     reviews={reviews}
-                    onNavigate={setActiveTab}
+                    onNavigate={navigateTab}
                     onSelectConversation={(id) => setSelectedConversationId(id)}
+                    onOpenProfile={openProfile}
+                  />
+                )}
+
+                {activeTab === "practice" && (
+                  <PracticeView
+                    peers={peers}
+                    attempts={practiceAttempts}
+                    initialQuizId={selectedQuizId}
+                    onClearInitialQuiz={() => setSelectedQuizId(null)}
+                    onNavigate={navigateTab}
+                  />
+                )}
+
+                {activeTab === "leaderboard" && (
+                  <LeaderboardView
+                    peers={peers}
+                    onOpenProfile={openProfile}
+                    onNavigate={navigateTab}
                   />
                 )}
 
@@ -619,12 +820,13 @@ export function WorkspaceShell({
                     exchanges={exchanges}
                     peers={peers}
                     reviews={reviews}
-                    onNavigate={setActiveTab}
+                    onNavigate={navigateTab}
                     onSelectConversation={(id) => setSelectedConversationId(id)}
                     onPrepExchange={(promptText) => {
                       setAssistantInitialPrompt(promptText);
-                      setActiveTab("assistant");
+                      navigateTab("assistant");
                     }}
+                    onOpenProfile={openProfile}
                   />
                 )}
 
@@ -644,16 +846,47 @@ export function WorkspaceShell({
                   />
                 )}
 
-                {activeTab === "profile" && (
-                  <ProfileView peers={peers} reviews={reviews} />
-                )}
-
                 {activeTab === "admin" && <AdminPanelView />}
               </>
             )}
           </div>
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <nav
+        aria-label="Mobile navigation"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-5"
+      >
+        {[
+          { id: "dashboard" as const, label: "Home", icon: LayoutDashboard },
+          { id: "profile" as const, label: "Profile", icon: UserIcon },
+          { id: "explore" as const, label: "Explore", icon: Compass },
+          { id: "practice" as const, label: "Practice", icon: Dumbbell },
+          { id: "leaderboard" as const, label: "Ranks", icon: Trophy },
+        ].map((item) => {
+          const Icon = item.icon;
+          const isCurrent =
+            item.id === "profile"
+              ? activeTab === "profile" && (!viewedProfileUid || viewedProfileUid === user.uid)
+              : activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => navigateTab(item.id)}
+              className={`flex flex-col items-center justify-center py-2.5 gap-1 text-[11px] font-medium transition-colors ${
+                isCurrent
+                  ? "text-blue-600 dark:text-blue-400"
+                  : "text-slate-500 dark:text-slate-400"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
       <NotificationAlerts
         alerts={activeAlerts}

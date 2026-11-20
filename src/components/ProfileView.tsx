@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  AlertCircle,
   Camera,
   CheckCircle2,
+  Loader2,
   Plus,
+  RefreshCw,
   RotateCcw,
   ShieldCheck,
   Star,
@@ -10,9 +13,13 @@ import {
   X,
 } from "lucide-react";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { useAuth } from "../contexts/AuthContext";
+import { getUserEmail, useAuth } from "../contexts/AuthContext";
 import { storage } from "../lib/firebase";
-import { updatePrivateSettings, updateUserProfile } from "../lib/firestoreService";
+import {
+  createUserProfile,
+  updatePrivateSettings,
+  updateUserProfile,
+} from "../lib/firestoreService";
 import {
   calculateProfileCompletion,
   COMMON_COUNTRIES,
@@ -54,7 +61,16 @@ function listsMatch(a: string[], b: string[]): boolean {
 }
 
 export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
-  const { user, profile, privateInfo, loading } = useAuth();
+  const {
+    user,
+    profile,
+    privateInfo,
+    loading,
+    profileLoading,
+    profileError,
+    retryProfileLoad,
+    isVerified,
+  } = useAuth();
 
   const [displayName, setDisplayName] = useState("");
   const [photoURL, setPhotoURL] = useState("");
@@ -92,8 +108,14 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
       setLearnSkills(profile.learnSkills);
       setLanguages(profile.languages);
       setIsPublic(profile.isPublic);
+    } else if (user) {
+      setDisplayName(
+        (prev) =>
+          prev || user.displayName || getUserEmail(user).split("@")[0] || ""
+      );
+      setPhotoURL((prev) => prev || user.photoURL || "");
     }
-  }, [profile]);
+  }, [profile, user]);
 
   useEffect(() => {
     if (privateInfo) {
@@ -103,7 +125,9 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
   }, [privateInfo]);
 
   const isDirty = useMemo(() => {
-    if (!profile) return false;
+    if (!profile) {
+      return Boolean(displayName.trim() || bio.trim() || teachSkills.length || learnSkills.length);
+    }
     const publicChanged =
       displayName !== profile.displayName ||
       photoURL !== profile.photoURL ||
@@ -155,20 +179,44 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
 
   if (!user) return null;
 
-  if (loading || !profile) {
+  if (loading || profileLoading) {
     return (
-      <div className="space-y-6" aria-busy="true" aria-label="Loading profile">
-        <div className="h-8 w-56 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 h-96 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 animate-pulse" />
-          <div className="lg:col-span-4 h-72 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 animate-pulse" />
+      <div
+        className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center text-center gap-3 min-h-[240px]"
+        aria-busy="true"
+        aria-label="Loading profile"
+      >
+        <Loader2 className="w-7 h-7 animate-spin text-blue-600 dark:text-blue-400" />
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
+          Loading profile settings...
+        </p>
+      </div>
+    );
+  }
+
+  if (profileError && !profile) {
+    return (
+      <div
+        role="alert"
+        className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900 space-y-3"
+      >
+        <div className="flex items-start gap-2.5 text-sm text-red-700 dark:text-red-300">
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+          <span>{extractReadableError(new Error(profileError))}</span>
         </div>
+        <button
+          type="button"
+          onClick={retryProfileLoad}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Retry
+        </button>
       </div>
     );
   }
 
   const completion = calculateProfileCompletion({
-    ...profile,
     displayName,
     photoURL,
     country,
@@ -179,7 +227,7 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
     availability,
   });
 
-  const myReviews = reviews.filter((r) => r.revieweeId === profile.uid);
+  const myReviews = reviews.filter((r) => r.revieweeId === user.uid);
   const avgRating = myReviews.length
     ? (myReviews.reduce((acc, r) => acc + r.rating, 0) / myReviews.length).toFixed(1)
     : null;
@@ -232,16 +280,29 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
   };
 
   const handleResetForm = () => {
-    setDisplayName(profile.displayName);
-    setPhotoURL(profile.photoURL);
-    setCountry(profile.country);
-    setBio(profile.bio);
-    setExperienceLevel(profile.experienceLevel);
-    setAvailability(profile.availability);
-    setTeachSkills(profile.teachSkills);
-    setLearnSkills(profile.learnSkills);
-    setLanguages(profile.languages);
-    setIsPublic(profile.isPublic);
+    if (profile) {
+      setDisplayName(profile.displayName);
+      setPhotoURL(profile.photoURL);
+      setCountry(profile.country);
+      setBio(profile.bio);
+      setExperienceLevel(profile.experienceLevel);
+      setAvailability(profile.availability);
+      setTeachSkills(profile.teachSkills);
+      setLearnSkills(profile.learnSkills);
+      setLanguages(profile.languages);
+      setIsPublic(profile.isPublic);
+    } else {
+      setDisplayName(user.displayName || getUserEmail(user).split("@")[0] || "");
+      setPhotoURL(user.photoURL || "");
+      setCountry("United States");
+      setBio("");
+      setExperienceLevel("Intermediate");
+      setAvailability("");
+      setTeachSkills([]);
+      setLearnSkills([]);
+      setLanguages(["English"]);
+      setIsPublic(true);
+    }
     if (privateInfo) {
       setAllowMessagesFrom(privateInfo.allowMessagesFrom);
       setEmailNotifications(privateInfo.emailNotifications);
@@ -255,7 +316,7 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
     setErrorMsg("");
     setStatusMsg("");
 
-    if (!user.emailVerified) {
+    if (!isVerified) {
       setErrorMsg("Please verify your email address before saving profile updates.");
       return;
     }
@@ -270,9 +331,10 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
 
     setSaving(true);
     try {
-      await updateUserProfile(profile.uid, {
+      const publicPayload = {
         displayName: cleanName,
         photoURL,
+        city: profile?.city || "",
         country,
         bio,
         teachSkills,
@@ -281,17 +343,31 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
         languages: languages.length > 0 ? languages : ["English"],
         availability,
         isPublic,
-      });
+        emailVerified: isVerified,
+      };
 
-      if (privateInfo) {
-        await updatePrivateSettings(profile.uid, {
-          email: privateInfo.email || user.email || "",
-          blockedUserIds: privateInfo.blockedUserIds,
+      if (!profile) {
+        await createUserProfile(user.uid, getUserEmail(user), publicPayload, {
           allowMessagesFrom,
           emailNotifications,
         });
+        setStatusMsg("Profile created and saved to Firestore.");
+      } else {
+        await updateUserProfile(profile.uid, {
+          ...publicPayload,
+          existingProfile: profile,
+        });
+
+        if (privateInfo) {
+          await updatePrivateSettings(profile.uid, {
+            email: privateInfo.email || getUserEmail(user),
+            blockedUserIds: privateInfo.blockedUserIds,
+            allowMessagesFrom,
+            emailNotifications,
+          });
+        }
+        setStatusMsg("Profile and preferences saved to Firestore.");
       }
-      setStatusMsg("Profile and preferences saved to Firestore.");
     } catch (err) {
       setErrorMsg(extractReadableError(err));
     } finally {
@@ -303,7 +379,7 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
     if (!privateInfo) return;
     setErrorMsg("");
     try {
-      await updatePrivateSettings(profile.uid, {
+      await updatePrivateSettings(user.uid, {
         email: privateInfo.email,
         blockedUserIds: privateInfo.blockedUserIds.filter((id) => id !== blockedUid),
         allowMessagesFrom: privateInfo.allowMessagesFrom,
@@ -337,7 +413,7 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
           <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
             ·
           </span>
-          {profile.isVerified ? (
+          {profile?.isVerified ? (
             <span className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
               <ShieldCheck className="w-4 h-4" />
               Admin Verified Peer
@@ -345,7 +421,7 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
           ) : (
             <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
               <UserCheck className="w-4 h-4" />
-              Standard Member
+              {profile ? "Standard Member" : "New Profile"}
             </span>
           )}
         </div>
@@ -408,7 +484,7 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
                   />
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Private email ({privateInfo?.email || user.email}) is never shown on your public
+                  Private email ({privateInfo?.email || getUserEmail(user) || "Not provided"}) is never shown on your public
                   profile.
                 </p>
               </div>
@@ -751,7 +827,11 @@ export function ProfileView({ peers = [], reviews = [] }: ProfileViewProps) {
                 disabled={saving}
                 className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-60 transition-colors whitespace-nowrap"
               >
-                {saving ? "Saving..." : "Save Profile & Settings"}
+                {saving
+                  ? "Saving..."
+                  : profile
+                    ? "Save Profile & Settings"
+                    : "Create Profile"}
               </button>
               {isDirty && (
                 <button

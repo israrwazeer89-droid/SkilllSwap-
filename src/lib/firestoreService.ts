@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { handleFirestoreError, OperationType } from "./firestoreError";
+import { computeNextActivityStats, normalizeUserProfile } from "./gamification";
 import {
   DEFAULT_POPULAR_SKILLS,
   sanitizeId,
@@ -21,18 +22,22 @@ import type {
   Conversation,
   ExchangeRequest,
   ExchangeStatus,
+  NoteItem,
+  PracticeQuiz,
   PrivateAccountInfo,
   ReportReason,
   ReportStatus,
   UserProfile,
 } from "../types/skillswap";
 
-export async function updateUserProfile(
+export async function createUserProfile(
   uid: string,
-  updates: Pick<
+  email: string,
+  profileData: Pick<
     UserProfile,
     | "displayName"
     | "photoURL"
+    | "city"
     | "country"
     | "bio"
     | "teachSkills"
@@ -41,7 +46,102 @@ export async function updateUserProfile(
     | "languages"
     | "availability"
     | "isPublic"
+  > & { emailVerified?: boolean },
+  privateSettings?: Partial<
+    Pick<PrivateAccountInfo, "allowMessagesFrom" | "emailNotifications">
   >
+) {
+  const path = `users/${uid}`;
+  try {
+    const cleanName = profileData.displayName
+      .trim()
+      .slice(0, SCHEMA_LIMITS.displayNameMax);
+    if (cleanName.length < SCHEMA_LIMITS.displayNameMin) {
+      throw new Error("Display name must be at least 2 characters.");
+    }
+    const cleanCountry = profileData.country
+      .trim()
+      .slice(0, SCHEMA_LIMITS.countryMax);
+    if (cleanCountry.length < SCHEMA_LIMITS.countryMin) {
+      throw new Error("Country must be at least 2 characters.");
+    }
+
+    const batch = writeBatch(db);
+    batch.set(doc(db, "users", uid), {
+      uid,
+      displayName: cleanName,
+      photoURL: profileData.photoURL.trim().slice(0, SCHEMA_LIMITS.photoUrlMax),
+      city: (profileData.city || "").trim().slice(0, SCHEMA_LIMITS.cityMax),
+      country: cleanCountry,
+      bio: profileData.bio.trim().slice(0, SCHEMA_LIMITS.bioMax),
+      teachSkills: sanitizeStringList(
+        profileData.teachSkills,
+        SCHEMA_LIMITS.maxSkills,
+        SCHEMA_LIMITS.skillItemMax
+      ),
+      learnSkills: sanitizeStringList(
+        profileData.learnSkills,
+        SCHEMA_LIMITS.maxSkills,
+        SCHEMA_LIMITS.skillItemMax
+      ),
+      experienceLevel: profileData.experienceLevel,
+      languages: sanitizeStringList(
+        profileData.languages.length > 0 ? profileData.languages : ["English"],
+        SCHEMA_LIMITS.maxLanguages,
+        40
+      ),
+      availability: profileData.availability
+        .trim()
+        .slice(0, SCHEMA_LIMITS.availabilityMax),
+      xp: 0,
+      streakDays: 0,
+      lastActiveDate: "",
+      hoursLearned: 0,
+      hoursTaught: 0,
+      badges: [],
+      weeklyActivity: [0, 0, 0, 0, 0, 0, 0],
+      emailVerified: Boolean(profileData.emailVerified),
+      ratingAvg: 0,
+      ratingCount: 0,
+      completedExchanges: 0,
+      isVerified: false,
+      isSuspended: false,
+      isPublic: Boolean(profileData.isPublic),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    batch.set(doc(db, "users", uid, "private", "info"), {
+      uid,
+      email: email.trim().slice(0, 160),
+      blockedUserIds: [],
+      allowMessagesFrom: privateSettings?.allowMessagesFrom ?? "anyone",
+      emailNotifications: privateSettings?.emailNotifications ?? true,
+      updatedAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function updateUserProfile(
+  uid: string,
+  updates: Pick<
+    UserProfile,
+    | "displayName"
+    | "photoURL"
+    | "city"
+    | "country"
+    | "bio"
+    | "teachSkills"
+    | "learnSkills"
+    | "experienceLevel"
+    | "languages"
+    | "availability"
+    | "isPublic"
+  > & { emailVerified?: boolean; existingProfile?: UserProfile | null }
 ) {
   const path = `users/${uid}`;
   try {
@@ -54,9 +154,14 @@ export async function updateUserProfile(
       throw new Error("Country must be at least 2 characters.");
     }
 
+    const base = updates.existingProfile
+      ? normalizeUserProfile(updates.existingProfile)
+      : normalizeUserProfile({ uid });
+
     await updateDoc(doc(db, "users", uid), {
       displayName: cleanName,
       photoURL: updates.photoURL.trim().slice(0, SCHEMA_LIMITS.photoUrlMax),
+      city: (updates.city || "").trim().slice(0, SCHEMA_LIMITS.cityMax),
       country: cleanCountry,
       bio: updates.bio.trim().slice(0, SCHEMA_LIMITS.bioMax),
       teachSkills: sanitizeStringList(
@@ -70,9 +175,22 @@ export async function updateUserProfile(
         SCHEMA_LIMITS.skillItemMax
       ),
       experienceLevel: updates.experienceLevel,
-      languages: sanitizeStringList(updates.languages, SCHEMA_LIMITS.maxLanguages, 40),
+      languages: sanitizeStringList(
+        updates.languages.length > 0 ? updates.languages : ["English"],
+        SCHEMA_LIMITS.maxLanguages,
+        40
+      ),
       availability: updates.availability.trim().slice(0, SCHEMA_LIMITS.availabilityMax),
       isPublic: Boolean(updates.isPublic),
+      emailVerified: Boolean(updates.emailVerified ?? base.emailVerified),
+      xp: base.xp,
+      streakDays: base.streakDays,
+      lastActiveDate: base.lastActiveDate,
+      hoursLearned: base.hoursLearned,
+      hoursTaught: base.hoursTaught,
+      badges: base.badges,
+      weeklyActivity: base.weeklyActivity,
+      completedExchanges: base.completedExchanges,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
@@ -159,19 +277,44 @@ export async function updateExchangeStatus(
   req: ExchangeRequest,
   nextStatus: ExchangeStatus,
   actorUid: string,
-  actorName: string
+  actorName: string,
+  actorProfile?: UserProfile | null
 ) {
   const path = `exchangeRequests/${req.id}`;
   try {
-    await updateDoc(doc(db, "exchangeRequests", req.id), {
+    const batch = writeBatch(db);
+    batch.update(doc(db, "exchangeRequests", req.id), {
       status: nextStatus,
       updatedAt: serverTimestamp(),
     });
 
+    if (nextStatus === "completed" && actorProfile) {
+      const normalized = normalizeUserProfile(actorProfile);
+      const stats = computeNextActivityStats(normalized, {
+        xpGain: 50,
+        completedExchangeDelta: 1,
+        hoursLearnedDelta: 1,
+        hoursTaughtDelta: 1,
+      });
+      batch.update(doc(db, "users", actorUid), {
+        city: normalized.city,
+        xp: stats.xp,
+        streakDays: stats.streakDays,
+        lastActiveDate: stats.lastActiveDate,
+        hoursLearned: stats.hoursLearned,
+        hoursTaught: stats.hoursTaught,
+        badges: stats.badges,
+        weeklyActivity: stats.weeklyActivity,
+        completedExchanges: stats.completedExchanges,
+        emailVerified: normalized.emailVerified,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
     const recipientUid = req.fromUid === actorUid ? req.toUid : req.fromUid;
     if (nextStatus === "accepted" || nextStatus === "completed") {
       const notifRef = doc(collection(db, "notifications"));
-      await setDoc(notifRef, {
+      batch.set(notifRef, {
         id: notifRef.id,
         userId: recipientUid,
         senderId: actorUid,
@@ -179,13 +322,43 @@ export async function updateExchangeStatus(
         title:
           nextStatus === "accepted"
             ? `${actorName.slice(0, 50)} accepted your SkillSwap`
-            : `Exchange marked completed with ${actorName.slice(0, 45)}`,
+            : `Exchange completed with ${actorName.slice(0, 45)} (+50 XP)`,
         body: `${req.offeredSkill} ↔ ${req.requestedSkill}`.slice(0, 300),
         relatedId: req.id,
         isRead: false,
         createdAt: serverTimestamp(),
       });
     }
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function syncPendingExchangeXp(profile: UserProfile) {
+  const path = `users/${profile.uid}`;
+  try {
+    const normalized = normalizeUserProfile(profile);
+    const stats = computeNextActivityStats(normalized, {
+      xpGain: 50,
+      completedExchangeDelta: 1,
+      hoursLearnedDelta: 1,
+      hoursTaughtDelta: 1,
+    });
+    await updateDoc(doc(db, "users", profile.uid), {
+      city: normalized.city,
+      xp: stats.xp,
+      streakDays: stats.streakDays,
+      lastActiveDate: stats.lastActiveDate,
+      hoursLearned: stats.hoursLearned,
+      hoursTaught: stats.hoursTaught,
+      badges: stats.badges,
+      weeklyActivity: stats.weeklyActivity,
+      completedExchanges: stats.completedExchanges,
+      emailVerified: normalized.emailVerified,
+      updatedAt: serverTimestamp(),
+    });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
   }
@@ -464,7 +637,20 @@ export async function submitReport(params: {
 export async function adminToggleUserVerify(uid: string, nextVerified: boolean) {
   const path = `users/${uid}`;
   try {
+    const snap = await getDoc(doc(db, "users", uid));
+    const current = snap.exists()
+      ? normalizeUserProfile(snap.data() as Partial<UserProfile> & { uid: string })
+      : normalizeUserProfile({ uid });
     await updateDoc(doc(db, "users", uid), {
+      city: current.city,
+      xp: current.xp,
+      streakDays: current.streakDays,
+      lastActiveDate: current.lastActiveDate,
+      hoursLearned: current.hoursLearned,
+      hoursTaught: current.hoursTaught,
+      badges: current.badges,
+      weeklyActivity: current.weeklyActivity,
+      emailVerified: current.emailVerified,
       isVerified: nextVerified,
       updatedAt: serverTimestamp(),
     });
@@ -476,12 +662,130 @@ export async function adminToggleUserVerify(uid: string, nextVerified: boolean) 
 export async function adminToggleUserSuspend(uid: string, nextSuspended: boolean) {
   const path = `users/${uid}`;
   try {
+    const snap = await getDoc(doc(db, "users", uid));
+    const current = snap.exists()
+      ? normalizeUserProfile(snap.data() as Partial<UserProfile> & { uid: string })
+      : normalizeUserProfile({ uid });
     await updateDoc(doc(db, "users", uid), {
+      city: current.city,
+      xp: current.xp,
+      streakDays: current.streakDays,
+      lastActiveDate: current.lastActiveDate,
+      hoursLearned: current.hoursLearned,
+      hoursTaught: current.hoursTaught,
+      badges: current.badges,
+      weeklyActivity: current.weeklyActivity,
+      emailVerified: current.emailVerified,
       isSuspended: nextSuspended,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+// Personal Notes (Private to owner)
+export async function createUserNote(
+  userId: string,
+  input: Pick<NoteItem, "title" | "text" | "skillTag" | "noteDate">
+): Promise<string> {
+  const noteRef = doc(collection(db, "notes"));
+  const path = `notes/${noteRef.id}`;
+  try {
+    await setDoc(noteRef, {
+      id: noteRef.id,
+      userId,
+      title: input.title.trim().slice(0, SCHEMA_LIMITS.noteTitleMax),
+      text: input.text.trim().slice(0, SCHEMA_LIMITS.noteTextMax),
+      skillTag: (input.skillTag.trim() || "General").slice(0, SCHEMA_LIMITS.noteTagMax),
+      noteDate: input.noteDate.trim().slice(0, 20),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return noteRef.id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function updateUserNote(
+  noteId: string,
+  input: Pick<NoteItem, "title" | "text" | "skillTag" | "noteDate">
+) {
+  const path = `notes/${noteId}`;
+  try {
+    await updateDoc(doc(db, "notes", noteId), {
+      title: input.title.trim().slice(0, SCHEMA_LIMITS.noteTitleMax),
+      text: input.text.trim().slice(0, SCHEMA_LIMITS.noteTextMax),
+      skillTag: (input.skillTag.trim() || "General").slice(0, SCHEMA_LIMITS.noteTagMax),
+      noteDate: input.noteDate.trim().slice(0, 20),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteUserNote(noteId: string) {
+  const path = `notes/${noteId}`;
+  try {
+    await deleteDoc(doc(db, "notes", noteId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+// Practice Quiz Submission (+10 XP per correct answer)
+export async function submitPracticeAttempt(params: {
+  userProfile: UserProfile;
+  quiz: PracticeQuiz;
+  score: number;
+}): Promise<{ xpEarned: number; attemptId: string }> {
+  const attemptRef = doc(collection(db, "practiceAttempts"));
+  const path = `practiceAttempts/${attemptRef.id}`;
+  const cleanScore = Math.max(0, Math.min(5, Math.round(params.score)));
+  const xpEarned = cleanScore * 10;
+
+  try {
+    const normalized = normalizeUserProfile(params.userProfile);
+    const stats = computeNextActivityStats(normalized, {
+      xpGain: xpEarned,
+      hoursLearnedDelta: 0.25,
+      hasPractice: true,
+      perfectPractice: cleanScore === 5,
+    });
+
+    const batch = writeBatch(db);
+    batch.set(attemptRef, {
+      id: attemptRef.id,
+      userId: normalized.uid,
+      quizId: params.quiz.id.slice(0, 80),
+      quizTitle: params.quiz.title.slice(0, 120),
+      category: params.quiz.category.slice(0, 60),
+      score: cleanScore,
+      totalQuestions: 5,
+      xpEarned,
+      createdAt: serverTimestamp(),
+    });
+
+    batch.update(doc(db, "users", normalized.uid), {
+      city: normalized.city,
+      xp: stats.xp,
+      streakDays: stats.streakDays,
+      lastActiveDate: stats.lastActiveDate,
+      hoursLearned: stats.hoursLearned,
+      hoursTaught: stats.hoursTaught,
+      badges: stats.badges,
+      weeklyActivity: stats.weeklyActivity,
+      completedExchanges: stats.completedExchanges,
+      emailVerified: normalized.emailVerified,
+      updatedAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+    return { xpEarned, attemptId: attemptRef.id };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
   }
 }
 

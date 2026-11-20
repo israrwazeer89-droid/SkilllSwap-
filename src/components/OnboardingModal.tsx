@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Plus, X, ArrowRight, AlertCircle } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
-import { updateUserProfile } from "../lib/firestoreService";
+import { getUserEmail, useAuth } from "../contexts/AuthContext";
+import { createUserProfile, updateUserProfile } from "../lib/firestoreService";
 import {
   COMMON_COUNTRIES,
   COMMON_LANGUAGES,
@@ -11,8 +11,9 @@ import {
 import type { ExperienceLevel } from "../types/skillswap";
 
 export function OnboardingModal() {
-  const { user, profile, needsOnboarding, setNeedsOnboarding } = useAuth();
+  const { user, profile, isVerified, needsOnboarding, setNeedsOnboarding } = useAuth();
   const [displayName, setDisplayName] = useState(profile?.displayName || user?.displayName || "");
+  const [city, setCity] = useState(profile?.city || "");
   const [country, setCountry] = useState(profile?.country || "United States");
   const [bio, setBio] = useState(profile?.bio || "");
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(
@@ -30,7 +31,26 @@ export function OnboardingModal() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  if (!user || !user.emailVerified || !profile || !needsOnboarding) {
+  useEffect(() => {
+    if (!needsOnboarding) return;
+    setDisplayName(
+      profile?.displayName ||
+        user?.displayName ||
+        getUserEmail(user).split("@")[0] ||
+        ""
+    );
+    setCity(profile?.city || "");
+    setCountry(profile?.country || "United States");
+    setBio(profile?.bio || "");
+    setExperienceLevel(profile?.experienceLevel || "Intermediate");
+    setAvailability(profile?.availability || "Weekdays 6pm - 9pm UTC");
+    setTeachSkills(profile?.teachSkills || []);
+    setLearnSkills(profile?.learnSkills || []);
+    setLanguages(profile?.languages?.length ? profile.languages : ["English"]);
+    setError("");
+  }, [needsOnboarding, profile, user]);
+
+  if (!user || !isVerified || !needsOnboarding) {
     return null;
   }
 
@@ -75,9 +95,10 @@ export function OnboardingModal() {
 
     setSaving(true);
     try {
-      await updateUserProfile(user.uid, {
+      const payload = {
         displayName: displayName.trim(),
-        photoURL: profile.photoURL || user.photoURL || "",
+        photoURL: profile?.photoURL || user.photoURL || "",
+        city: city.trim(),
         country,
         bio: bio.trim() || "Excited to teach and learn through peer skill swaps.",
         teachSkills,
@@ -86,7 +107,13 @@ export function OnboardingModal() {
         languages,
         availability: availability.trim() || "Flexible",
         isPublic: true,
-      });
+        emailVerified: isVerified,
+      };
+      if (profile) {
+        await updateUserProfile(user.uid, { ...payload, existingProfile: profile });
+      } else {
+        await createUserProfile(user.uid, getUserEmail(user), payload);
+      }
       setNeedsOnboarding(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save your profile.");
@@ -126,7 +153,7 @@ export function OnboardingModal() {
         )}
 
         <form onSubmit={handleSave} className="space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                 Full Name
@@ -137,6 +164,20 @@ export function OnboardingModal() {
                 maxLength={80}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                City
+              </label>
+              <input
+                type="text"
+                maxLength={80}
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="e.g., Lahore, Austin"
                 className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
               />
             </div>

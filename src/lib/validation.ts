@@ -34,6 +34,10 @@ export const SCHEMA_LIMITS = {
   skillCategoryMin: SkillProps.category.minLength,
   skillCategoryMax: SkillProps.category.maxLength,
   skillDescMax: SkillProps.description.maxLength,
+  cityMax: 80,
+  noteTitleMax: 120,
+  noteTextMax: 3000,
+  noteTagMax: 50,
 };
 
 export function sanitizeId(raw: string): string {
@@ -54,11 +58,28 @@ export function sanitizeStringList(items: string[], maxItems: number, maxLen = 6
   return clean;
 }
 
-export function calculateProfileCompletion(profile: UserProfile | null): number {
+export function calculateProfileCompletion(
+  profile: Pick<
+    UserProfile,
+    | "displayName"
+    | "country"
+    | "bio"
+    | "teachSkills"
+    | "learnSkills"
+    | "languages"
+    | "availability"
+    | "photoURL"
+  > & { city?: string } | null
+): number {
   if (!profile) return 0;
   let score = 0;
   if (profile.displayName.trim().length >= 2) score += 15;
-  if (profile.country.trim().length >= 2 && profile.country !== "Global") score += 15;
+  if (
+    (profile.city && profile.city.trim().length >= 2) ||
+    (profile.country.trim().length >= 2 && profile.country !== "Global")
+  ) {
+    score += 15;
+  }
   if (profile.bio.trim().length >= 20) score += 15;
   if (profile.teachSkills.length > 0) score += 20;
   if (profile.learnSkills.length > 0) score += 20;

@@ -106,4 +106,19 @@ export const dirtyDozenPayloads: SecurityTestPayload[] = [
     actor: { uid: 'userA', email: 'a@example.com', email_verified: true },
     expectedOutcome: 'PERMISSION_DENIED',
   },
+  {
+    name: '13. Private Note Cross-Read & Scrape',
+    collection: 'notes/noteOwnedByB',
+    operation: 'get',
+    actor: { uid: 'userA', email: 'a@example.com', email_verified: true },
+    expectedOutcome: 'PERMISSION_DENIED',
+  },
+  {
+    name: '14. XP & Practice Score Inflation',
+    collection: 'practiceAttempts/attempt1',
+    operation: 'create',
+    actor: { uid: 'userA', email: 'a@example.com', email_verified: true },
+    payload: { userId: 'userA', score: 2, totalQuestions: 5, xpEarned: 500 },
+    expectedOutcome: 'PERMISSION_DENIED',
+  },
 ];

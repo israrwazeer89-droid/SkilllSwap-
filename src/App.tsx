@@ -1,15 +1,34 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Loader2, Moon, Sun } from "lucide-react";
 import { AuthModal } from "./components/AuthModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LandingPage } from "./components/LandingPage";
+import { ProfilePageView } from "./components/ProfilePageView";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import { ThemeProvider } from "./contexts/ThemeContext";
+import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
+
+function parseProfilePath(pathname: string): string | null {
+  const match = pathname.match(/^\/profile\/([a-zA-Z0-9_-]+)$/);
+  return match ? match[1] : null;
+}
 
 function SkillSwapRouter() {
   const { user, loading, authError, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<"login" | "signup">("signup");
+  const [routeProfileUid, setRouteProfileUid] = useState<string | null>(() =>
+    parseProfilePath(window.location.pathname)
+  );
+
+  useEffect(() => {
+    const onPopState = () => {
+      setRouteProfileUid(parseProfilePath(window.location.pathname));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   if (authError) {
     let readable = authError;
@@ -60,6 +79,7 @@ function SkillSwapRouter() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
         <div className="space-y-3 text-center">
+          <Loader2 className="w-7 h-7 animate-spin text-blue-600 dark:text-blue-400 mx-auto" />
           <p className="text-lg font-bold font-display text-slate-900 dark:text-white">
             SkillSwap
           </p>
@@ -72,7 +92,85 @@ function SkillSwapRouter() {
   }
 
   if (user) {
-    return <WorkspaceShell />;
+    return (
+      <WorkspaceShell
+        initialTab={routeProfileUid ? "profile" : "dashboard"}
+        initialProfileUid={routeProfileUid}
+      />
+    );
+  }
+
+  // Public /profile/[userId] route accessible to everyone even when signed out
+  if (routeProfileUid) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+        <header className="sticky top-0 z-20 h-16 px-4 sm:px-6 lg:px-8 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+          <div className="max-w-7xl mx-auto h-full flex items-center justify-between gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                window.history.pushState(null, "", "/");
+                setRouteProfileUid(null);
+              }}
+              className="text-lg font-bold tracking-tight text-slate-900 dark:text-white font-display"
+            >
+              SkillSwap
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label="Toggle theme"
+                className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+              >
+                {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalMode("login");
+                  setAuthModalOpen(true);
+                }}
+                className="px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200"
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalMode("signup");
+                  setAuthModalOpen(true);
+                }}
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+              >
+                Join SkillSwap
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <ProfilePageView
+            viewedUserId={routeProfileUid}
+            onOpenAuth={(mode) => {
+              setAuthModalMode(mode);
+              setAuthModalOpen(true);
+            }}
+            onBackHome={() => {
+              window.history.pushState(null, "", "/");
+              setRouteProfileUid(null);
+            }}
+          />
+        </main>
+
+        <AuthModal
+          isOpen={authModalOpen}
+          initialMode={authModalMode}
+          onClose={() => setAuthModalOpen(false)}
+        />
+      </div>
+    );
   }
 
   return (

@@ -23,7 +23,10 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'google.com'
+      );
     }
 
     function isValidId(id) {
@@ -37,7 +40,7 @@ service cloud.firestore {
     function isAdmin() {
       return isVerifiedUser() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'israrwazeer89@gmail.com'
+        (request.auth.token.email_verified == true && request.auth.token.email == 'israrwazeer89@gmail.com')
       );
     }
 
@@ -52,23 +55,39 @@ service cloud.firestore {
     // =========================================================
     // Validation Blueprints (Phase 4)
     // =========================================================
+    function isValidIntList7(arr) {
+      return arr is list && arr.size() == 7 &&
+        arr[0] is int && arr[0] >= 0 && arr[0] <= 1000 &&
+        arr[1] is int && arr[1] >= 0 && arr[1] <= 1000 &&
+        arr[2] is int && arr[2] >= 0 && arr[2] <= 1000 &&
+        arr[3] is int && arr[3] >= 0 && arr[3] <= 1000 &&
+        arr[4] is int && arr[4] >= 0 && arr[4] <= 1000 &&
+        arr[5] is int && arr[5] >= 0 && arr[5] <= 1000 &&
+        arr[6] is int && arr[6] >= 0 && arr[6] <= 1000;
+    }
+
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll([
-        'uid', 'displayName', 'photoURL', 'country', 'bio',
+        'uid', 'displayName', 'photoURL', 'city', 'country', 'bio',
         'teachSkills', 'learnSkills', 'experienceLevel', 'languages',
-        'availability', 'ratingAvg', 'ratingCount', 'completedExchanges',
+        'availability', 'xp', 'streakDays', 'lastActiveDate',
+        'hoursLearned', 'hoursTaught', 'badges', 'weeklyActivity', 'emailVerified',
+        'ratingAvg', 'ratingCount', 'completedExchanges',
         'isVerified', 'isSuspended', 'isPublic', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'uid', 'displayName', 'photoURL', 'country', 'bio',
+        'uid', 'displayName', 'photoURL', 'city', 'country', 'bio',
         'teachSkills', 'learnSkills', 'experienceLevel', 'languages',
-        'availability', 'ratingAvg', 'ratingCount', 'completedExchanges',
+        'availability', 'xp', 'streakDays', 'lastActiveDate',
+        'hoursLearned', 'hoursTaught', 'badges', 'weeklyActivity', 'emailVerified',
+        'ratingAvg', 'ratingCount', 'completedExchanges',
         'isVerified', 'isSuspended', 'isPublic', 'createdAt', 'updatedAt'
       ]) &&
       data.uid == userId &&
       isValidId(data.uid) &&
       isValidShortString(data.displayName, 2, 80) &&
       isValidShortString(data.photoURL, 0, 1000) &&
+      isValidShortString(data.city, 0, 80) &&
       isValidShortString(data.country, 2, 80) &&
       isValidShortString(data.bio, 0, 600) &&
       isValidStringArray(data.teachSkills, 15) &&
@@ -76,6 +95,14 @@ service cloud.firestore {
       data.experienceLevel in ['Beginner', 'Intermediate', 'Advanced', 'Expert'] &&
       isValidStringArray(data.languages, 10) &&
       isValidShortString(data.availability, 0, 120) &&
+      (data.xp is int && data.xp >= 0 && data.xp <= 1000000) &&
+      (data.streakDays is int && data.streakDays >= 0 && data.streakDays <= 10000) &&
+      isValidShortString(data.lastActiveDate, 0, 20) &&
+      (data.hoursLearned is number && data.hoursLearned >= 0 && data.hoursLearned <= 100000) &&
+      (data.hoursTaught is number && data.hoursTaught >= 0 && data.hoursTaught <= 100000) &&
+      isValidStringArray(data.badges, 20) &&
+      isValidIntList7(data.weeklyActivity) &&
+      data.emailVerified is bool &&
       (data.ratingAvg is number && data.ratingAvg >= 0 && data.ratingAvg <= 5) &&
       (data.ratingCount is int && data.ratingCount >= 0 && data.ratingCount <= 100000) &&
       (data.completedExchanges is int && data.completedExchanges >= 0 && data.completedExchanges <= 100000) &&
@@ -272,6 +299,35 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidNote(data, noteId) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'text', 'skillTag', 'noteDate', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['id', 'userId', 'title', 'text', 'skillTag', 'noteDate', 'createdAt', 'updatedAt']) &&
+      data.id == noteId &&
+      isValidId(data.id) &&
+      isValidId(data.userId) &&
+      isValidShortString(data.title, 1, 120) &&
+      isValidShortString(data.text, 1, 3000) &&
+      isValidShortString(data.skillTag, 1, 50) &&
+      isValidShortString(data.noteDate, 4, 20) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidPracticeAttempt(data, attemptId) {
+      return data.keys().hasAll(['id', 'userId', 'quizId', 'quizTitle', 'category', 'score', 'totalQuestions', 'xpEarned', 'createdAt']) &&
+      data.keys().hasOnly(['id', 'userId', 'quizId', 'quizTitle', 'category', 'score', 'totalQuestions', 'xpEarned', 'createdAt']) &&
+      data.id == attemptId &&
+      isValidId(data.id) &&
+      isValidId(data.userId) &&
+      isValidShortString(data.quizId, 1, 80) &&
+      isValidShortString(data.quizTitle, 1, 120) &&
+      isValidShortString(data.category, 1, 60) &&
+      (data.totalQuestions is int && data.totalQuestions == 5) &&
+      (data.score is int && data.score >= 0 && data.score <= 5) &&
+      (data.xpEarned is int && data.xpEarned == data.score * 10) &&
+      data.createdAt is timestamp;
+    }
+
     // =========================================================
     // Collection Rules
     // =========================================================
@@ -291,6 +347,11 @@ service cloud.firestore {
         isValidUserProfile(incoming(), userId) &&
         incoming().isVerified == false &&
         incoming().isSuspended == false &&
+        incoming().xp == 0 &&
+        incoming().streakDays == 0 &&
+        incoming().hoursLearned == 0 &&
+        incoming().hoursTaught == 0 &&
+        incoming().badges.size() == 0 &&
         incoming().ratingAvg == 0 &&
         incoming().ratingCount == 0 &&
         incoming().completedExchanges == 0 &&
@@ -308,10 +369,21 @@ service cloud.firestore {
             existing().isSuspended == false &&
             incoming().isVerified == existing().isVerified &&
             incoming().isSuspended == existing().isSuspended &&
+            incoming().xp >= existing().get('xp', 0) &&
+            incoming().xp <= existing().get('xp', 0) + 100 &&
+            incoming().completedExchanges >= existing().get('completedExchanges', 0) &&
+            incoming().completedExchanges <= existing().get('completedExchanges', 0) + 1 &&
+            incoming().hoursLearned >= existing().get('hoursLearned', 0) &&
+            incoming().hoursLearned <= existing().get('hoursLearned', 0) + 10 &&
+            incoming().hoursTaught >= existing().get('hoursTaught', 0) &&
+            incoming().hoursTaught <= existing().get('hoursTaught', 0) + 10 &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'displayName', 'photoURL', 'country', 'bio',
+              'displayName', 'photoURL', 'city', 'country', 'bio',
               'teachSkills', 'learnSkills', 'experienceLevel',
-              'languages', 'availability', 'isPublic', 'updatedAt'
+              'languages', 'availability', 'isPublic', 'emailVerified',
+              'xp', 'streakDays', 'lastActiveDate', 'hoursLearned',
+              'hoursTaught', 'badges', 'weeklyActivity', 'completedExchanges',
+              'updatedAt'
             ])
           )
         );
@@ -579,6 +651,45 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
       allow delete: if isValidId(reportId) && isAdmin();
+    }
+
+    // 10. Private Personal Notes (Strictly Owner-Only)
+    match /notes/{noteId} {
+      allow get: if isValidId(noteId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(noteId) && isVerifiedUser() &&
+        isValidNote(incoming(), noteId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(noteId) && isVerifiedUser() &&
+        isValidNote(incoming(), noteId) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'text', 'skillTag', 'noteDate', 'updatedAt'
+        ]);
+      allow delete: if isValidId(noteId) && isVerifiedUser() && existing().userId == request.auth.uid;
+    }
+
+    // 11. Practice Quiz Attempts & History
+    match /practiceAttempts/{attemptId} {
+      allow get: if isValidId(attemptId) && isSignedIn() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+      allow create: if isValidId(attemptId) && isVerifiedUser() &&
+        isValidPracticeAttempt(incoming(), attemptId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(attemptId) && isVerifiedUser() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
     }
   }
 }

@@ -9,6 +9,8 @@
 6. **Temporal Integrity**: All `createdAt` and `updatedAt` timestamps on writes must equal `request.time`.
 7. **Review Grounding**: A review may only be created by a participant of an existing, `'completed'` exchange request (`exchangeId`).
 8. **Path Hardening**: All document IDs must satisfy `^[a-zA-Z0-9_-]+$` and `size() <= 128`.
+9. **Private Notes Isolation**: Every document in `/notes/{noteId}` is strictly private to `resource.data.userId == request.auth.uid`. Non-owners can never read, list, update, or delete another user's notes.
+10. **XP & Practice Integrity**: Practice quiz attempts in `/practiceAttempts/{attemptId}` require `totalQuestions == 5`, `0 <= score <= 5`, and `xpEarned == score * 10`. Owner XP updates on `/users/{userId}` cannot decrease XP or jump by more than `100` in a single write.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
 1. **Self-Verify Shadow Field**: User creates/updates `/users/{uid}` with `isVerified: true` or `isSuspended: false -> true` or adds an arbitrary ghost field `role: 'admin'`.
@@ -22,4 +24,6 @@
 9. **Unauthorized Message Injection**: User C (not in `participantIds`) attempts to read or write in `/conversations/{convId}/messages/{msgId}`.
 10. **Fake Review Fabrication**: User A attempts to create a review for an exchange that does not exist or is still `pending`.
 11. **ID Poisoning / Resource Exhaustion**: Attacker uses a 500-character document ID or injects a 5KB bio string into `/users/{uid}`.
-12. **Blanket Collection Scrape**: User attempts `list` on `/exchangeRequests`, `/conversations`, `/notifications`, or `/reports` without filtering to `request.auth.uid`.
+12. **Blanket Collection Scrape & Note Snooping**: User attempts `list` on `/exchangeRequests`, `/conversations`, `/notifications`, `/notes`, or `/reports` without filtering to `request.auth.uid`.
+13. **XP / Quiz Inflation Attack**: User attempts to update `/users/{uid}` with `xp: 999999` or create `/practiceAttempts/{id}` with `score: 2, xpEarned: 500`.
+

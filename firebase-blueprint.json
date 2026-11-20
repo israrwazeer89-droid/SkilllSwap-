@@ -20,6 +20,10 @@
           "type": "string",
           "maxLength": 1000
         },
+        "city": {
+          "type": "string",
+          "maxLength": 80
+        },
         "country": {
           "type": "string",
           "minLength": 2,
@@ -48,6 +52,33 @@
         "availability": {
           "type": "string",
           "maxLength": 120
+        },
+        "xp": {
+          "type": "integer"
+        },
+        "streakDays": {
+          "type": "integer"
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "hoursLearned": {
+          "type": "number"
+        },
+        "hoursTaught": {
+          "type": "number"
+        },
+        "badges": {
+          "type": "array",
+          "description": "Achievement badges earned by the user (max 20)."
+        },
+        "weeklyActivity": {
+          "type": "array",
+          "description": "7-day Mon-Sun activity counts."
+        },
+        "emailVerified": {
+          "type": "boolean"
         },
         "ratingAvg": {
           "type": "number"
@@ -80,6 +111,7 @@
         "uid",
         "displayName",
         "photoURL",
+        "city",
         "country",
         "bio",
         "teachSkills",
@@ -87,6 +119,14 @@
         "experienceLevel",
         "languages",
         "availability",
+        "xp",
+        "streakDays",
+        "lastActiveDate",
+        "hoursLearned",
+        "hoursTaught",
+        "badges",
+        "weeklyActivity",
+        "emailVerified",
         "ratingAvg",
         "ratingCount",
         "completedExchanges",
@@ -660,6 +700,121 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "Private study note owned by a single user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "skillTag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "noteDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "title",
+        "text",
+        "skillTag",
+        "noteDate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PracticeAttempt": {
+      "title": "PracticeAttempt",
+      "description": "Completed practice quiz attempt with score and XP earned.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "quizId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "quizTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "score": {
+          "type": "integer"
+        },
+        "totalQuestions": {
+          "type": "integer"
+        },
+        "xpEarned": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "quizId",
+        "quizTitle",
+        "category",
+        "score",
+        "totalQuestions",
+        "xpEarned",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -706,6 +861,14 @@
     "/reports/{reportId}": {
       "schema": { "$ref": "#/entities/Report" },
       "description": "Trust and safety user reports."
+    },
+    "/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/Note" },
+      "description": "Private personal notes belonging to the owner."
+    },
+    "/practiceAttempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/PracticeAttempt" },
+      "description": "Practice quiz completion history and XP records."
     }
   }
 }

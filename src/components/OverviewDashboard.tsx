@@ -1,18 +1,28 @@
 import {
+  AlertCircle,
   ArrowRight,
   BookOpen,
   CheckCircle2,
   Clock,
+  Dumbbell,
+  Flame,
+  Loader2,
+  Medal,
   MessageSquare,
+  RefreshCw,
   Sparkles,
-  TrendingUp,
+  Trophy,
+  UserPlus,
 } from "lucide-react";
-import { useAuth } from "../contexts/AuthContext";
+import { getUserEmail, useAuth } from "../contexts/AuthContext";
+import { getLevelInfo, getUserRank, normalizeUserProfile, sortLeaderboard } from "../lib/gamification";
+import { getRecommendedQuiz } from "../lib/practiceQuizzes";
 import { calculateProfileCompletion } from "../lib/validation";
 import type {
   AiMatch,
   Conversation,
   ExchangeRequest,
+  PracticeAttempt,
   Review,
   UserProfile,
   WorkspaceTab,
@@ -25,8 +35,25 @@ interface OverviewDashboardProps {
   conversations: Conversation[];
   matches: AiMatch[];
   reviews: Review[];
+  practiceAttempts?: PracticeAttempt[];
+  workspaceError?: string | null;
+  onRetryWorkspace?: () => void;
   onNavigate: (tab: WorkspaceTab) => void;
   onSelectConversation: (convId: string) => void;
+  onStartPractice?: (quizId?: string) => void;
+  onOpenProfile?: (uid: string) => void;
+}
+
+function formatFirestoreError(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as { error?: string; path?: string | null };
+    if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.path ? `${parsed.error} (${parsed.path})` : parsed.error;
+    }
+  } catch {
+    // Plain error message
+  }
+  return raw;
 }
 
 export function OverviewDashboard({
@@ -35,19 +62,240 @@ export function OverviewDashboard({
   conversations,
   matches,
   reviews,
+  practiceAttempts = [],
+  workspaceError,
+  onRetryWorkspace,
   onNavigate,
   onSelectConversation,
+  onStartPractice,
+  onOpenProfile,
 }: OverviewDashboardProps) {
-  const { profile } = useAuth();
+  const {
+    user,
+    profile,
+    profileLoading,
+    profileError,
+    retryProfileLoad,
+    setNeedsOnboarding,
+  } = useAuth();
 
-  if (!profile) return null;
+  if (profileLoading) {
+    return (
+      <div
+        className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center text-center gap-3 min-h-[280px]"
+        aria-busy="true"
+        aria-label="Loading dashboard"
+      >
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600 dark:text-blue-400" />
+        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+          Loading your dashboard...
+        </h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">
+          Fetching your SkillSwap profile, matches, and active exchanges from Firestore.
+        </p>
+      </div>
+    );
+  }
 
-  const completion = calculateProfileCompletion(profile);
+  const activeError = profileError || workspaceError;
+  if (activeError) {
+    return (
+      <div
+        role="alert"
+        className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/70 space-y-4 max-w-2xl"
+      >
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div className="space-y-1.5">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+              Could not load your dashboard
+            </h2>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              {formatFirestoreError(activeError)}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              retryProfileLoad();
+              onRetryWorkspace?.();
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Retry
+          </button>
+          {!profile && (
+            <button
+              type="button"
+              onClick={() => setNeedsOnboarding(true)}
+              className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              Create Profile
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const allLeaderboardUsers = (() => {
+    const map = new Map<string, UserProfile>();
+    for (const p of peers) map.set(p.uid, normalizeUserProfile(p));
+    if (profile) map.set(profile.uid, normalizeUserProfile(profile));
+    return Array.from(map.values());
+  })();
+  const topThreeLearners = sortLeaderboard(allLeaderboardUsers).slice(0, 3);
+  const recommendedQuiz = getRecommendedQuiz(profile, practiceAttempts);
+
+  if (!profile) {
+    const accountLabel =
+      user?.displayName || getUserEmail(user).split("@")[0] || "there";
+    return (
+      <div className="space-y-6">
+        <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2.5 max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+              Welcome to SkillSwap, {accountLabel}
+            </p>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+              Welcome! Create Your Profile
+            </h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+              Add your photo, city, skills you can teach, and skills you want to learn so peers can
+              connect with you, earn XP together, and appear on the leaderboard.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setNeedsOnboarding(true)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors whitespace-nowrap"
+            >
+              <UserPlus className="w-4 h-4" />
+              Create Profile
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate("profile")}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
+            >
+              Open My Profile
+            </button>
+          </div>
+        </div>
+
+        {/* Summary KPI Strip even before profile creation */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">My Rank</p>
+            <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
+              Unranked
+            </p>
+          </div>
+          <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">My XP</p>
+            <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
+              0 XP
+            </p>
+          </div>
+          <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">My Streak</p>
+            <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
+              0 days
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                My Next Practice
+              </h2>
+              <Dumbbell className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                {recommendedQuiz.title}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {recommendedQuiz.category} · 5 questions · 30s per question · +10 XP per correct answer
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                onStartPractice ? onStartPractice(recommendedQuiz.id) : onNavigate("practice")
+              }
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+            >
+              Start Practice Quiz
+            </button>
+          </div>
+
+          <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                Top 3 Learners
+              </h2>
+              <button
+                type="button"
+                onClick={() => onNavigate("leaderboard")}
+                className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                Leaderboard
+              </button>
+            </div>
+            {topThreeLearners.length > 0 ? (
+              <div className="space-y-2">
+                {topThreeLearners.map((learner, idx) => (
+                  <button
+                    key={learner.uid}
+                    type="button"
+                    onClick={() =>
+                      onOpenProfile ? onOpenProfile(learner.uid) : onNavigate("leaderboard")
+                    }
+                    className="w-full text-left py-2 px-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="font-mono text-xs font-bold text-amber-500 w-5">
+                        #{idx + 1}
+                      </span>
+                      <Avatar src={learner.photoURL} name={learner.displayName} size="sm" />
+                      <span className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                        {learner.displayName}
+                      </span>
+                    </div>
+                    <span className="font-mono text-xs font-semibold text-blue-600 dark:text-blue-400 tabular-nums shrink-0">
+                      {learner.xp} XP
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Create your profile and complete a practice quiz to claim #1 on the leaderboard.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const normalizedProfile = normalizeUserProfile(profile);
+  const levelInfo = getLevelInfo(normalizedProfile.xp);
+  const myRank = getUserRank(normalizedProfile.uid, allLeaderboardUsers);
+  const completion = calculateProfileCompletion(normalizedProfile);
   const pendingRequests = exchanges.filter((e) => e.status === "pending");
   const activeExchanges = exchanges.filter((e) => e.status === "accepted");
   const completedExchanges = exchanges.filter((e) => e.status === "completed");
-  const unreadMessages = conversations.filter((c) => c.unreadBy.includes(profile.uid)).length;
-  const myReviewsReceived = reviews.filter((r) => r.revieweeId === profile.uid);
+  const unreadMessages = conversations.filter((c) => c.unreadBy.includes(normalizedProfile.uid)).length;
+  const myReviewsReceived = reviews.filter((r) => r.revieweeId === normalizedProfile.uid);
   const avgRating =
     myReviewsReceived.length > 0
       ? (
@@ -56,18 +304,10 @@ export function OverviewDashboard({
         ).toFixed(1)
       : "—";
 
-  const learnedSkills = Array.from(
-    new Set(
-      completedExchanges.map((e) =>
-        e.fromUid === profile.uid ? e.requestedSkill : e.offeredSkill
-      )
-    )
-  );
-
-  const myLearnLower = new Set(profile.learnSkills.map((s) => s.toLowerCase()));
-  const myTeachLower = new Set(profile.teachSkills.map((s) => s.toLowerCase()));
+  const myLearnLower = new Set(normalizedProfile.learnSkills.map((s) => s.toLowerCase()));
+  const myTeachLower = new Set(normalizedProfile.teachSkills.map((s) => s.toLowerCase()));
   const complementaryPeers = peers
-    .filter((p) => p.uid !== profile.uid && !p.isSuspended && p.isPublic)
+    .filter((p) => p.uid !== normalizedProfile.uid && !p.isSuspended && p.isPublic)
     .map((p) => {
       const teachesWhatIWant = p.teachSkills.find((s) => myLearnLower.has(s.toLowerCase()));
       const wantsWhatITeach = p.learnSkills.find((s) => myTeachLower.has(s.toLowerCase()));
@@ -80,19 +320,19 @@ export function OverviewDashboard({
 
   return (
     <div className="space-y-8">
-      {/* Welcome & Profile Completion */}
+      {/* Welcome & Level Progress */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         <div className="lg:col-span-8 p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between gap-5">
           <div className="space-y-2">
             <p className="text-xs font-medium text-blue-600 dark:text-blue-400">
-              Personal Learning Workspace
+              Personal Learning Workspace · Level {levelInfo.level}
             </p>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Welcome back, {profile.displayName}
+              Welcome back, {normalizedProfile.displayName}
             </h1>
             <p className="text-sm text-slate-600 dark:text-slate-400 max-w-2xl">
-              Track your active skill swaps, review pending peer invitations, or run Gemini AI
-              matching to discover new complementary teachers.
+              Track your rank and XP, practice core skills with timed quizzes, and swap skills with
+              peers worldwide.
             </p>
           </div>
 
@@ -103,7 +343,17 @@ export function OverviewDashboard({
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors whitespace-nowrap"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              Find AI Matches
+              Explore People
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onStartPractice ? onStartPractice(recommendedQuiz.id) : onNavigate("practice")
+              }
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
+            >
+              <Dumbbell className="w-3.5 h-3.5" />
+              Start Practice (+XP)
             </button>
             <button
               type="button"
@@ -111,7 +361,7 @@ export function OverviewDashboard({
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
             >
               <BookOpen className="w-3.5 h-3.5" />
-              Open AI Study Assistant
+              AI Study Assistant
             </button>
           </div>
         </div>
@@ -120,22 +370,23 @@ export function OverviewDashboard({
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-900 dark:text-white">
-                Profile Completion
+                XP to Level {levelInfo.level + 1}
               </span>
-              <span className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400 tabular-nums">
-                {completion}%
+              <span className="font-mono text-xs font-bold text-blue-600 dark:text-blue-400 tabular-nums">
+                {levelInfo.xpInLevel}/{levelInfo.xpPerLevel} XP
               </span>
             </div>
             <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
               <div
                 className="h-full bg-blue-600 rounded-full transition-all duration-300"
-                style={{ width: `${completion}%` }}
+                style={{ width: `${levelInfo.progressPercent}%` }}
               />
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              {completion < 100
-                ? "Add your bio, availability, and both teaching/learning skills for stronger AI match accuracy."
-                : "Your profile is complete and visible for high-precision peer matching."}
+              {levelInfo.xpToNextLevel} XP until Level {levelInfo.level + 1} · Profile completion:{" "}
+              <span className="font-mono font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+                {completion}%
+              </span>
             </p>
           </div>
 
@@ -144,160 +395,216 @@ export function OverviewDashboard({
             onClick={() => onNavigate("profile")}
             className="self-start text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
           >
-            <span>{completion < 100 ? "Finish profile setup" : "Manage profile & privacy"}</span>
+            <span>Open My Profile &amp; Notes</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* KPI Strip */}
+      {/* Gamification & Workspace KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <button
           type="button"
-          onClick={() => onNavigate("exchanges")}
+          onClick={() => onNavigate("leaderboard")}
           className="text-left p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 transition-colors"
         >
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Pending Requests
-          </p>
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+            <span>My Rank</span>
+            <Trophy className="w-4 h-4 text-amber-500" />
+          </div>
           <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
-            {pendingRequests.length}
+            {myRank ? `#${myRank}` : "—"}
+          </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            {allLeaderboardUsers.length} ranked learners
           </p>
         </button>
-        <button
-          type="button"
-          onClick={() => onNavigate("exchanges")}
-          className="text-left p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 transition-colors"
-        >
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Active Exchanges
-          </p>
-          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
-            {activeExchanges.length}
-          </p>
-        </button>
-        <button
-          type="button"
-          onClick={() => onNavigate("messages")}
-          className="text-left p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 transition-colors"
-        >
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Unread Conversations
-          </p>
-          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
-            {unreadMessages}
-          </p>
-        </button>
+
         <button
           type="button"
           onClick={() => onNavigate("profile")}
           className="text-left p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 transition-colors"
         >
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Completed / Rating
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+            <span>My XP</span>
+            <Sparkles className="w-4 h-4 text-blue-500" />
+          </div>
+          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
+            {normalizedProfile.xp} XP
           </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Level {levelInfo.level} · {normalizedProfile.badges.length} badges
+          </p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate("practice")}
+          className="text-left p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 transition-colors"
+        >
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+            <span>My Streak</span>
+            <Flame className="w-4 h-4 text-orange-500" />
+          </div>
+          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
+            {normalizedProfile.streakDays} {normalizedProfile.streakDays === 1 ? "day" : "days"}
+          </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            {practiceAttempts.length} quizzes completed
+          </p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate("exchanges")}
+          className="text-left p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 transition-colors"
+        >
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+            <span>Swaps &amp; Rating</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          </div>
           <p className="text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1 tabular-nums">
             {completedExchanges.length} · {avgRating}★
+          </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            {pendingRequests.length} pending · {activeExchanges.length} active · {unreadMessages} unread
           </p>
         </button>
       </div>
 
-      {/* Skills Offered & Wanted + Learning Progress */}
+      {/* My Next Practice + Top 3 Learners + Skills Summary */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-              Skills Offered
-            </h2>
-            <button
-              type="button"
-              onClick={() => onNavigate("profile")}
-              className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              Edit
-            </button>
-          </div>
-          {profile.teachSkills.length > 0 ? (
-            <ul className="space-y-2 text-sm text-slate-700 dark:text-slate-300">
-              {profile.teachSkills.map((skill) => (
-                <li
-                  key={skill}
-                  className="py-1.5 border-b border-slate-100 dark:border-slate-800 last:border-0"
-                >
-                  {skill}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              No teaching skills added yet.
-            </p>
-          )}
-        </div>
-
-        <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-              Skills Wanted
-            </h2>
-            <button
-              type="button"
-              onClick={() => onNavigate("profile")}
-              className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              Edit
-            </button>
-          </div>
-          {profile.learnSkills.length > 0 ? (
-            <ul className="space-y-2 text-sm text-slate-700 dark:text-slate-300">
-              {profile.learnSkills.map((skill) => (
-                <li
-                  key={skill}
-                  className="py-1.5 border-b border-slate-100 dark:border-slate-800 last:border-0"
-                >
-                  {skill}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              No learning goals added yet.
-            </p>
-          )}
-        </div>
-
-        <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-              Learning Progress
-            </h2>
-            <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-          </div>
+        {/* My Next Practice */}
+        <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between gap-4">
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 dark:text-slate-400">Swaps Completed</span>
-              <span className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
-                {completedExchanges.length}
-              </span>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                My Next Practice
+              </h2>
+              <Dumbbell className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 dark:text-slate-400">Skills Practiced</span>
-              <span className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
-                {learnedSkills.length}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-500 dark:text-slate-400">Peer Reviews Received</span>
-              <span className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
-                {myReviewsReceived.length}
-              </span>
+            <div>
+              <p className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                Recommended · {recommendedQuiz.category}
+              </p>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-1">
+                {recommendedQuiz.title}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                {recommendedQuiz.description}
+              </p>
             </div>
           </div>
-          {learnedSkills.length > 0 && (
-            <p className="text-xs text-slate-600 dark:text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
-              Recently completed: {learnedSkills.slice(0, 3).join(", ")}
-            </p>
-          )}
+
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+              5 MCQs · +50 max XP
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                onStartPractice ? onStartPractice(recommendedQuiz.id) : onNavigate("practice")
+              }
+              className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors whitespace-nowrap"
+            >
+              Start Practice
+            </button>
+          </div>
+        </div>
+
+        {/* Top 3 Learners */}
+        <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between gap-4">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                Top 3 Learners
+              </h2>
+              <button
+                type="button"
+                onClick={() => onNavigate("leaderboard")}
+                className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                Full Leaderboard
+              </button>
+            </div>
+
+            {topThreeLearners.length > 0 ? (
+              <div className="space-y-2.5">
+                {topThreeLearners.map((learner, idx) => {
+                  const medalColor =
+                    idx === 0
+                      ? "text-amber-500"
+                      : idx === 1
+                        ? "text-slate-400"
+                        : "text-orange-500";
+                  return (
+                    <button
+                      key={learner.uid}
+                      type="button"
+                      onClick={() =>
+                        onOpenProfile ? onOpenProfile(learner.uid) : onNavigate("leaderboard")
+                      }
+                      className="w-full text-left py-2 px-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 flex items-center justify-between gap-3 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Medal className={`w-4 h-4 shrink-0 ${medalColor}`} />
+                        <Avatar src={learner.photoURL} name={learner.displayName} size="sm" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                            #{idx + 1} {learner.displayName}
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            Level {getLevelInfo(learner.xp).level} · {learner.badges.length} badges
+                          </p>
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs font-bold text-blue-600 dark:text-blue-400 tabular-nums shrink-0">
+                        {learner.xp} XP
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Complete a quiz or swap to earn XP and top the leaderboard.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Skills Offered & Wanted */}
+        <div className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+              My Skill Exchange Goals
+            </h2>
+            <button
+              type="button"
+              onClick={() => onNavigate("profile")}
+              className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              Edit Skills
+            </button>
+          </div>
+          <div className="space-y-3 text-xs">
+            <div>
+              <p className="font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+                Can Teach
+              </p>
+              <p className="text-sm text-slate-800 dark:text-slate-200">
+                {normalizedProfile.teachSkills.join(" · ") || "No teaching skills added yet."}
+              </p>
+            </div>
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <p className="font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+                Wants To Learn
+              </p>
+              <p className="text-sm text-slate-800 dark:text-slate-200">
+                {normalizedProfile.learnSkills.join(" · ") || "No learning goals added yet."}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 

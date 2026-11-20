@@ -3,8 +3,10 @@ import {
   BookOpen,
   Check,
   CheckCircle2,
+  Loader2,
   MessageSquare,
   Star,
+  UserPlus,
   X,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
@@ -29,6 +31,7 @@ interface ExchangesViewProps {
   onNavigate: (tab: WorkspaceTab) => void;
   onSelectConversation: (convId: string) => void;
   onPrepExchange: (topic: string) => void;
+  onOpenProfile?: (uid: string) => void;
 }
 
 export function ExchangesView({
@@ -38,8 +41,9 @@ export function ExchangesView({
   onNavigate,
   onSelectConversation,
   onPrepExchange,
+  onOpenProfile,
 }: ExchangesViewProps) {
-  const { user, profile } = useAuth();
+  const { profile, profileLoading, isVerified, setNeedsOnboarding } = useAuth();
   const [filter, setFilter] = useState<"all" | ExchangeStatus>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -50,20 +54,56 @@ export function ExchangesView({
   const [comment, setComment] = useState("");
   const [reviewBusy, setReviewBusy] = useState(false);
 
-  if (!profile) return null;
+  if (profileLoading) {
+    return (
+      <div className="p-10 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-7 h-7 animate-spin text-blue-600 dark:text-blue-400" />
+        <p className="text-sm text-slate-600 dark:text-slate-300">Loading exchanges...</p>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+            Create your profile to start exchanges
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Set up your teaching and learning skills before sending or accepting skill swaps.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setNeedsOnboarding(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shrink-0 self-start sm:self-auto"
+        >
+          <UserPlus className="w-4 h-4" />
+          Create Profile
+        </button>
+      </div>
+    );
+  }
 
   const filtered =
     filter === "all" ? exchanges : exchanges.filter((e) => e.status === filter);
 
   const handleStatusChange = async (req: ExchangeRequest, nextStatus: ExchangeStatus) => {
-    if (!user?.emailVerified) {
+    if (!isVerified) {
       setNotice("Please verify your email address before updating exchanges.");
       return;
     }
     setBusyId(req.id);
     setNotice("");
     try {
-      await updateExchangeStatus(req, nextStatus, profile.uid, profile.displayName);
+      await updateExchangeStatus(
+        req,
+        nextStatus,
+        profile.uid,
+        profile.displayName,
+        profile
+      );
       if (nextStatus === "accepted") {
         const peerUid = req.fromUid === profile.uid ? req.toUid : req.fromUid;
         const peer = peers.find((p) => p.uid === peerUid);
@@ -71,7 +111,11 @@ export function ExchangesView({
           await getOrCreateConversation(profile, peer, req.id);
         }
       }
-      setNotice(`Exchange status updated to ${nextStatus}.`);
+      setNotice(
+        nextStatus === "completed"
+          ? "Exchange marked complete! +50 XP earned and leaderboard rank updated."
+          : `Exchange status updated to ${nextStatus}.`
+      );
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Failed to update exchange.");
     } finally {
@@ -169,6 +213,7 @@ export function ExchangesView({
         <div className="space-y-4">
           {filtered.map((req) => {
             const isIncoming = req.toUid === profile.uid;
+            const peerUid = isIncoming ? req.fromUid : req.toUid;
             const peerName = isIncoming ? req.fromName : req.toName;
             const alreadyReviewed = reviews.some(
               (r) => r.exchangeId === req.id && r.reviewerId === profile.uid
@@ -195,7 +240,19 @@ export function ExchangesView({
                   </div>
 
                   <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                    Swap with {peerName}: {req.offeredSkill} ↔ {req.requestedSkill}
+                    Swap with{" "}
+                    {onOpenProfile ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenProfile(peerUid)}
+                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        {peerName}
+                      </button>
+                    ) : (
+                      peerName
+                    )}
+                    : {req.offeredSkill} ↔ {req.requestedSkill}
                   </h3>
 
                   {req.message && (
