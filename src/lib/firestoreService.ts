@@ -1,0 +1,563 @@
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from "firebase/firestore";
+import { db } from "./firebase";
+import { handleFirestoreError, OperationType } from "./firestoreError";
+import {
+  DEFAULT_POPULAR_SKILLS,
+  sanitizeId,
+  sanitizeStringList,
+  SCHEMA_LIMITS,
+} from "./validation";
+import type {
+  AiMatch,
+  Conversation,
+  ExchangeRequest,
+  ExchangeStatus,
+  PrivateAccountInfo,
+  ReportReason,
+  ReportStatus,
+  UserProfile,
+} from "../types/skillswap";
+
+export async function updateUserProfile(
+  uid: string,
+  updates: Pick<
+    UserProfile,
+    | "displayName"
+    | "photoURL"
+    | "country"
+    | "bio"
+    | "teachSkills"
+    | "learnSkills"
+    | "experienceLevel"
+    | "languages"
+    | "availability"
+    | "isPublic"
+  >
+) {
+  const path = `users/${uid}`;
+  try {
+    const cleanName = updates.displayName.trim().slice(0, SCHEMA_LIMITS.displayNameMax);
+    if (cleanName.length < SCHEMA_LIMITS.displayNameMin) {
+      throw new Error("Display name must be at least 2 characters.");
+    }
+    const cleanCountry = updates.country.trim().slice(0, SCHEMA_LIMITS.countryMax);
+    if (cleanCountry.length < SCHEMA_LIMITS.countryMin) {
+      throw new Error("Country must be at least 2 characters.");
+    }
+
+    await updateDoc(doc(db, "users", uid), {
+      displayName: cleanName,
+      photoURL: updates.photoURL.trim().slice(0, SCHEMA_LIMITS.photoUrlMax),
+      country: cleanCountry,
+      bio: updates.bio.trim().slice(0, SCHEMA_LIMITS.bioMax),
+      teachSkills: sanitizeStringList(
+        updates.teachSkills,
+        SCHEMA_LIMITS.maxSkills,
+        SCHEMA_LIMITS.skillItemMax
+      ),
+      learnSkills: sanitizeStringList(
+        updates.learnSkills,
+        SCHEMA_LIMITS.maxSkills,
+        SCHEMA_LIMITS.skillItemMax
+      ),
+      experienceLevel: updates.experienceLevel,
+      languages: sanitizeStringList(updates.languages, SCHEMA_LIMITS.maxLanguages, 40),
+      availability: updates.availability.trim().slice(0, SCHEMA_LIMITS.availabilityMax),
+      isPublic: Boolean(updates.isPublic),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function updatePrivateSettings(
+  uid: string,
+  updates: Pick<
+    PrivateAccountInfo,
+    "email" | "blockedUserIds" | "allowMessagesFrom" | "emailNotifications"
+  >
+) {
+  const path = `users/${uid}/private/info`;
+  try {
+    await updateDoc(doc(db, "users", uid, "private", "info"), {
+      email: updates.email.trim().slice(0, 160),
+      blockedUserIds: sanitizeStringList(updates.blockedUserIds, 100, 128),
+      allowMessagesFrom: updates.allowMessagesFrom,
+      emailNotifications: Boolean(updates.emailNotifications),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function createExchangeRequest(params: {
+  fromUser: UserProfile;
+  toUser: UserProfile;
+  offeredSkill: string;
+  requestedSkill: string;
+  message: string;
+  scheduleNote: string;
+}): Promise<string> {
+  const reqRef = doc(collection(db, "exchangeRequests"));
+  const path = `exchangeRequests/${reqRef.id}`;
+  try {
+    const offered = params.offeredSkill.trim().slice(0, 60);
+    const requested = params.requestedSkill.trim().slice(0, 60);
+    if (!offered || !requested) {
+      throw new Error("Please select both an offered skill and a requested skill.");
+    }
+
+    const batch = writeBatch(db);
+    batch.set(reqRef, {
+      id: reqRef.id,
+      fromUid: params.fromUser.uid,
+      toUid: params.toUser.uid,
+      fromName: params.fromUser.displayName.slice(0, 80),
+      toName: params.toUser.displayName.slice(0, 80),
+      participants: [params.fromUser.uid, params.toUser.uid],
+      offeredSkill: offered,
+      requestedSkill: requested,
+      message: params.message.trim().slice(0, SCHEMA_LIMITS.exchangeMessageMax),
+      scheduleNote: params.scheduleNote.trim().slice(0, SCHEMA_LIMITS.scheduleNoteMax),
+      status: "pending",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    const notifRef = doc(collection(db, "notifications"));
+    batch.set(notifRef, {
+      id: notifRef.id,
+      userId: params.toUser.uid,
+      senderId: params.fromUser.uid,
+      type: "exchange_request",
+      title: `New SkillSwap request from ${params.fromUser.displayName.slice(0, 50)}`,
+      body: `Offers ${offered} in exchange for ${requested}.`.slice(0, 300),
+      relatedId: reqRef.id,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+    return reqRef.id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function updateExchangeStatus(
+  req: ExchangeRequest,
+  nextStatus: ExchangeStatus,
+  actorUid: string,
+  actorName: string
+) {
+  const path = `exchangeRequests/${req.id}`;
+  try {
+    await updateDoc(doc(db, "exchangeRequests", req.id), {
+      status: nextStatus,
+      updatedAt: serverTimestamp(),
+    });
+
+    const recipientUid = req.fromUid === actorUid ? req.toUid : req.fromUid;
+    if (nextStatus === "accepted" || nextStatus === "completed") {
+      const notifRef = doc(collection(db, "notifications"));
+      await setDoc(notifRef, {
+        id: notifRef.id,
+        userId: recipientUid,
+        senderId: actorUid,
+        type: nextStatus === "accepted" ? "exchange_accepted" : "exchange_completed",
+        title:
+          nextStatus === "accepted"
+            ? `${actorName.slice(0, 50)} accepted your SkillSwap`
+            : `Exchange marked completed with ${actorName.slice(0, 45)}`,
+        body: `${req.offeredSkill} ↔ ${req.requestedSkill}`.slice(0, 300),
+        relatedId: req.id,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function getOrCreateConversation(
+  currentUser: UserProfile,
+  peer: UserProfile,
+  exchangeRequestId = ""
+): Promise<string> {
+  const sortedIds = [currentUser.uid, peer.uid].sort();
+  const convId = sanitizeId(`${sortedIds[0]}_${sortedIds[1]}`);
+  const path = `conversations/${convId}`;
+  try {
+    const convRef = doc(db, "conversations", convId);
+    const snap = await getDoc(convRef);
+    if (!snap.exists()) {
+      await setDoc(convRef, {
+        id: convId,
+        participantIds: sortedIds,
+        participantNames: {
+          [currentUser.uid]: currentUser.displayName.slice(0, 80),
+          [peer.uid]: peer.displayName.slice(0, 80),
+        },
+        participantPhotos: {
+          [currentUser.uid]: currentUser.photoURL.slice(0, 1000),
+          [peer.uid]: peer.photoURL.slice(0, 1000),
+        },
+        exchangeRequestId: exchangeRequestId.slice(0, 128),
+        lastMessage: "",
+        lastSenderId: "",
+        unreadBy: [],
+        lastMessageAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return convId;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function sendChatMessage(
+  conversation: Conversation,
+  sender: UserProfile,
+  text: string
+) {
+  const cleanText = text.trim().slice(0, SCHEMA_LIMITS.chatTextMax);
+  if (!cleanText) return;
+
+  const msgRef = doc(collection(db, "conversations", conversation.id, "messages"));
+  const path = `conversations/${conversation.id}/messages/${msgRef.id}`;
+  const recipientUid = conversation.participantIds.find((id) => id !== sender.uid) || "";
+
+  try {
+    const batch = writeBatch(db);
+    batch.set(msgRef, {
+      id: msgRef.id,
+      conversationId: conversation.id,
+      participantIds: conversation.participantIds,
+      senderId: sender.uid,
+      senderName: sender.displayName.slice(0, 80),
+      text: cleanText,
+      createdAt: serverTimestamp(),
+    });
+
+    batch.update(doc(db, "conversations", conversation.id), {
+      lastMessage: cleanText.slice(0, 500),
+      lastSenderId: sender.uid,
+      unreadBy: recipientUid ? [recipientUid] : [],
+      lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    if (recipientUid) {
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: notifRef.id,
+        userId: recipientUid,
+        senderId: sender.uid,
+        type: "new_message",
+        title: `New message from ${sender.displayName.slice(0, 50)}`,
+        body: cleanText.slice(0, 140),
+        relatedId: conversation.id,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function markConversationRead(
+  conversation: Conversation,
+  currentUid: string
+) {
+  if (!conversation.unreadBy.includes(currentUid)) return;
+  const path = `conversations/${conversation.id}`;
+  try {
+    await updateDoc(doc(db, "conversations", conversation.id), {
+      unreadBy: conversation.unreadBy.filter((id) => id !== currentUid),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function saveAiMatches(
+  userId: string,
+  matches: Array<Omit<AiMatch, "id" | "userId" | "createdAt">>,
+  staleMatchIds: string[] = []
+) {
+  const batch = writeBatch(db);
+  try {
+    const nextIds = new Set<string>();
+    for (const m of matches) {
+      const matchId = sanitizeId(`${userId}_${m.partnerId}`);
+      nextIds.add(matchId);
+      const ref = doc(db, "matches", matchId);
+      const safeName = (m.partnerName.trim() || "Peer").slice(0, 80);
+      const rawReason = m.reason.trim();
+      const safeReason = (
+        rawReason.length >= 5
+          ? rawReason
+          : `Compatible peer for ${m.primarySwap || "skill exchange"}.`
+      ).slice(0, 600);
+      const safeSwap = (m.primarySwap.trim() || "Skill Exchange").slice(0, 140);
+
+      batch.set(ref, {
+        id: matchId,
+        userId,
+        partnerId: m.partnerId,
+        partnerName: safeName,
+        compatibilityScore: Math.max(0, Math.min(100, Math.round(m.compatibilityScore))),
+        reason: safeReason,
+        primarySwap: safeSwap,
+        isAlternative: Boolean(m.isAlternative),
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    for (const oldId of staleMatchIds) {
+      if (!nextIds.has(oldId)) {
+        batch.delete(doc(db, "matches", oldId));
+      }
+    }
+
+    if (matches.length > 0) {
+      const top = [...matches].sort(
+        (a, b) => b.compatibilityScore - a.compatibilityScore
+      )[0];
+      const topScore = Math.max(0, Math.min(100, Math.round(top.compatibilityScore)));
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: notifRef.id,
+        userId,
+        senderId: userId,
+        type: "new_match",
+        title: `${matches.length} new AI ${
+          matches.length === 1 ? "match" : "matches"
+        } generated`.slice(0, 120),
+        body: `Top fit: ${top.partnerName.slice(0, 50)} (${topScore}% match) — ${top.primarySwap}`.slice(
+          0,
+          300
+        ),
+        relatedId: sanitizeId(`${userId}_${top.partnerId}`),
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, "matches");
+  }
+}
+
+export async function submitReview(params: {
+  exchangeId: string;
+  reviewer: UserProfile;
+  revieweeId: string;
+  rating: number;
+  comment: string;
+  skillLearned: string;
+}) {
+  const reviewId = sanitizeId(`${params.exchangeId}_${params.reviewer.uid}`);
+  const path = `reviews/${reviewId}`;
+  try {
+    const batch = writeBatch(db);
+    batch.set(doc(db, "reviews", reviewId), {
+      id: reviewId,
+      exchangeId: params.exchangeId,
+      reviewerId: params.reviewer.uid,
+      reviewerName: params.reviewer.displayName.slice(0, 80),
+      revieweeId: params.revieweeId,
+      rating: Math.max(1, Math.min(5, Math.round(params.rating))),
+      comment: params.comment.trim().slice(0, SCHEMA_LIMITS.reviewCommentMax),
+      skillLearned: params.skillLearned.trim().slice(0, 60),
+      isVisible: true,
+      createdAt: serverTimestamp(),
+    });
+
+    const notifRef = doc(collection(db, "notifications"));
+    batch.set(notifRef, {
+      id: notifRef.id,
+      userId: params.revieweeId,
+      senderId: params.reviewer.uid,
+      type: "new_review",
+      title: `${params.reviewer.displayName.slice(0, 45)} left you a ${params.rating}-star review`,
+      body: params.comment.trim().slice(0, 160),
+      relatedId: reviewId,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function markNotificationRead(notificationId: string) {
+  const path = `notifications/${notificationId}`;
+  try {
+    await updateDoc(doc(db, "notifications", notificationId), {
+      isRead: true,
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function markAllNotificationsRead(notificationIds: string[]) {
+  if (notificationIds.length === 0) return;
+  try {
+    const batch = writeBatch(db);
+    for (const id of notificationIds.slice(0, 50)) {
+      batch.update(doc(db, "notifications", id), { isRead: true });
+    }
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, "notifications");
+  }
+}
+
+export async function submitReport(params: {
+  reporterId: string;
+  reportedUid: string;
+  reason: ReportReason;
+  details: string;
+}) {
+  const reportRef = doc(collection(db, "reports"));
+  const path = `reports/${reportRef.id}`;
+  try {
+    await setDoc(reportRef, {
+      id: reportRef.id,
+      reporterId: params.reporterId,
+      reportedUid: params.reportedUid,
+      reason: params.reason,
+      details: params.details.trim().slice(0, SCHEMA_LIMITS.reportDetailsMax),
+      status: "open",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+// Admin operations
+export async function adminToggleUserVerify(uid: string, nextVerified: boolean) {
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, "users", uid), {
+      isVerified: nextVerified,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function adminToggleUserSuspend(uid: string, nextSuspended: boolean) {
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, "users", uid), {
+      isSuspended: nextSuspended,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function adminCreateSkill(
+  adminUid: string,
+  skill: { name: string; category: string; description: string }
+) {
+  const skillRef = doc(collection(db, "skills"));
+  const path = `skills/${skillRef.id}`;
+  try {
+    await setDoc(skillRef, {
+      id: skillRef.id,
+      name: skill.name.trim().slice(0, SCHEMA_LIMITS.skillNameMax),
+      category: skill.category.trim().slice(0, SCHEMA_LIMITS.skillCategoryMax),
+      description: skill.description.trim().slice(0, SCHEMA_LIMITS.skillDescMax),
+      createdBy: adminUid,
+      isActive: true,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function adminToggleSkillActive(skillId: string, isActive: boolean) {
+  const path = `skills/${skillId}`;
+  try {
+    await updateDoc(doc(db, "skills", skillId), {
+      isActive,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function adminDeleteSkill(skillId: string) {
+  const path = `skills/${skillId}`;
+  try {
+    await deleteDoc(doc(db, "skills", skillId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function adminSeedDefaultSkills(adminUid: string) {
+  const batch = writeBatch(db);
+  try {
+    for (const item of DEFAULT_POPULAR_SKILLS) {
+      const id = sanitizeId(item.name.toLowerCase().replace(/[^a-z0-9]+/g, "_"));
+      batch.set(doc(db, "skills", id), {
+        id,
+        name: item.name,
+        category: item.category,
+        description: item.description,
+        createdBy: adminUid,
+        isActive: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, "skills");
+  }
+}
+
+export async function adminUpdateReportStatus(reportId: string, status: ReportStatus) {
+  const path = `reports/${reportId}`;
+  try {
+    await updateDoc(doc(db, "reports", reportId), {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}

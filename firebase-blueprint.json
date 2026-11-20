@@ -1,0 +1,711 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public peer-to-peer learning profile without PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "bio": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "teachSkills": {
+          "type": "array",
+          "description": "Skills user can teach (max 15)."
+        },
+        "learnSkills": {
+          "type": "array",
+          "description": "Skills user wants to learn (max 15)."
+        },
+        "experienceLevel": {
+          "type": "string",
+          "enum": ["Beginner", "Intermediate", "Advanced", "Expert"]
+        },
+        "languages": {
+          "type": "array",
+          "description": "Languages spoken (max 10)."
+        },
+        "availability": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "ratingAvg": {
+          "type": "number"
+        },
+        "ratingCount": {
+          "type": "integer"
+        },
+        "completedExchanges": {
+          "type": "integer"
+        },
+        "isVerified": {
+          "type": "boolean"
+        },
+        "isSuspended": {
+          "type": "boolean"
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "photoURL",
+        "country",
+        "bio",
+        "teachSkills",
+        "learnSkills",
+        "experienceLevel",
+        "languages",
+        "availability",
+        "ratingAvg",
+        "ratingCount",
+        "completedExchanges",
+        "isVerified",
+        "isSuspended",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PrivateAccountInfo": {
+      "title": "PrivateAccountInfo",
+      "description": "Strictly isolated PII, blocking list, and privacy preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "blockedUserIds": {
+          "type": "array"
+        },
+        "allowMessagesFrom": {
+          "type": "string",
+          "enum": ["anyone", "matched_only"]
+        },
+        "emailNotifications": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "blockedUserIds",
+        "allowMessagesFrom",
+        "emailNotifications",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted admin role assignment document.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "superadmin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "role", "createdAt"]
+    },
+    "SkillCategoryItem": {
+      "title": "SkillCategoryItem",
+      "description": "Managed skill and category catalog entry.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60
+        },
+        "category": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 50
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "isActive": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category",
+        "description",
+        "createdBy",
+        "isActive",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExchangeRequest": {
+      "title": "ExchangeRequest",
+      "description": "Peer-to-peer skill exchange proposal and lifecycle.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fromUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "toUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fromName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "toName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "participants": {
+          "type": "array"
+        },
+        "offeredSkill": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "requestedSkill": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 800
+        },
+        "scheduleNote": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "rejected", "completed", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "fromUid",
+        "toUid",
+        "fromName",
+        "toName",
+        "participants",
+        "offeredSkill",
+        "requestedSkill",
+        "message",
+        "scheduleNote",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AiMatch": {
+      "title": "AiMatch",
+      "description": "Gemini AI compatibility match recommendation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partnerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partnerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "compatibilityScore": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 600
+        },
+        "primarySwap": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "isAlternative": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "partnerId",
+        "partnerName",
+        "compatibilityScore",
+        "reason",
+        "primarySwap",
+        "isAlternative",
+        "createdAt"
+      ]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct messaging thread between two exchange peers.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "participantIds": {
+          "type": "array"
+        },
+        "participantNames": {
+          "type": "object"
+        },
+        "participantPhotos": {
+          "type": "object"
+        },
+        "exchangeRequestId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "lastMessage": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "lastSenderId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "unreadBy": {
+          "type": "array"
+        },
+        "lastMessageAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "participantIds",
+        "participantNames",
+        "participantPhotos",
+        "exchangeRequestId",
+        "lastMessage",
+        "lastSenderId",
+        "unreadBy",
+        "lastMessageAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Individual chat message within a conversation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "participantIds": {
+          "type": "array"
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "conversationId",
+        "participantIds",
+        "senderId",
+        "senderName",
+        "text",
+        "createdAt"
+      ]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Peer rating and review after a completed skill exchange.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "exchangeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reviewerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reviewerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "revieweeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rating": {
+          "type": "integer"
+        },
+        "comment": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 800
+        },
+        "skillLearned": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "isVisible": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "exchangeId",
+        "reviewerId",
+        "reviewerName",
+        "revieweeId",
+        "rating",
+        "comment",
+        "skillLearned",
+        "isVisible",
+        "createdAt"
+      ]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time user notification for exchanges, messages, and reviews.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "new_match",
+            "exchange_request",
+            "exchange_accepted",
+            "exchange_completed",
+            "new_message",
+            "new_review",
+            "system"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "relatedId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "isRead": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "senderId",
+        "type",
+        "title",
+        "body",
+        "relatedId",
+        "isRead",
+        "createdAt"
+      ]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Trust and safety abuse report.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reporterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reportedUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["spam", "harassment", "inappropriate_content", "fake_profile", "other"]
+        },
+        "details": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 1000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "reviewed", "actioned", "dismissed"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "reporterId",
+        "reportedUid",
+        "reason",
+        "details",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public peer profiles without PII."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/PrivateAccountInfo" },
+      "description": "Isolated PII, blocked list, and privacy preferences."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Admin role directory."
+    },
+    "/skills/{skillId}": {
+      "schema": { "$ref": "#/entities/SkillCategoryItem" },
+      "description": "Managed skill catalog and categories."
+    },
+    "/exchangeRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/ExchangeRequest" },
+      "description": "Peer skill exchange requests and status lifecycle."
+    },
+    "/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/AiMatch" },
+      "description": "Cached AI compatibility matches per user."
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Direct messaging conversation threads."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Chat messages belonging to a conversation."
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Ratings and reviews for completed skill exchanges."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "User activity notifications."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Trust and safety user reports."
+    }
+  }
+}

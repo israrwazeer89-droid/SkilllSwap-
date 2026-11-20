@@ -1,0 +1,4 @@
+/api/health /.netlify/functions/health 200
+/api/ai/match /.netlify/functions/ai-match 200
+/api/ai/assistant /.netlify/functions/ai-assistant 200
+/* /index.html 200

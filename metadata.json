@@ -1,0 +1,6 @@
+{
+  "name": "SkillSwap",
+  "description": "Exchange Skills, Not Money — A global peer-to-peer learning platform powered by AI skill matching and guided study assistance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
