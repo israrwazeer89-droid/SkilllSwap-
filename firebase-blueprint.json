@@ -308,7 +308,39 @@
         },
         "status": {
           "type": "string",
-          "enum": ["pending", "accepted", "rejected", "completed", "cancelled"]
+          "enum": ["pending", "accepted", "in_progress", "rejected", "completed", "cancelled"]
+        },
+        "cancelReason": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "cancelledBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "cancelledByName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "scheduledCallDate": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "scheduledCallTime": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "scheduledCallTopic": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "scheduledBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "callHistory": {
+          "type": "array",
+          "description": "Completed live video call session logs (max 30)."
         },
         "createdAt": {
           "type": "string",
@@ -606,6 +638,9 @@
             "exchange_request",
             "exchange_accepted",
             "exchange_completed",
+            "exchange_cancelled",
+            "call_scheduled",
+            "lesson_uploaded",
             "new_message",
             "new_review",
             "system"
@@ -815,6 +850,110 @@
         "xpEarned",
         "createdAt"
       ]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "Recorded video lesson uploaded or linked by a teacher inside an exchange.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "exchangeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "participants": {
+          "type": "array"
+        },
+        "teacherId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "teacherName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "studentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "videoUrl": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 2000
+        },
+        "thumbnailUrl": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "duration": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "type": {
+          "type": "string",
+          "enum": ["upload", "link"]
+        },
+        "watched": {
+          "type": "boolean"
+        },
+        "rating": {
+          "type": "integer"
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "exchangeId",
+        "participants",
+        "teacherId",
+        "teacherName",
+        "studentId",
+        "studentName",
+        "title",
+        "videoUrl",
+        "thumbnailUrl",
+        "duration",
+        "type",
+        "watched",
+        "rating",
+        "comment",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -869,6 +1008,10 @@
     "/practiceAttempts/{attemptId}": {
       "schema": { "$ref": "#/entities/PracticeAttempt" },
       "description": "Practice quiz completion history and XP records."
+    },
+    "/lessons/{lessonId}": {
+      "schema": { "$ref": "#/entities/Lesson" },
+      "description": "Recorded video lessons shared inside skill exchanges."
     }
   }
 }

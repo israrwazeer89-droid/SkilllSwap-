@@ -155,7 +155,10 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'id', 'fromUid', 'toUid', 'fromName', 'toName', 'participants',
-        'offeredSkill', 'requestedSkill', 'message', 'scheduleNote', 'status', 'createdAt', 'updatedAt'
+        'offeredSkill', 'requestedSkill', 'message', 'scheduleNote', 'status',
+        'cancelReason', 'cancelledBy', 'cancelledByName',
+        'scheduledCallDate', 'scheduledCallTime', 'scheduledCallTopic', 'scheduledBy', 'callHistory',
+        'createdAt', 'updatedAt'
       ]) &&
       data.id == requestId &&
       isValidId(data.id) &&
@@ -171,7 +174,15 @@ service cloud.firestore {
       isValidShortString(data.requestedSkill, 1, 60) &&
       isValidShortString(data.message, 0, 800) &&
       isValidShortString(data.scheduleNote, 0, 200) &&
-      data.status in ['pending', 'accepted', 'rejected', 'completed', 'cancelled'] &&
+      data.status in ['pending', 'accepted', 'in_progress', 'rejected', 'completed', 'cancelled'] &&
+      (!('cancelReason' in data) || isValidShortString(data.cancelReason, 0, 200)) &&
+      (!('cancelledBy' in data) || data.cancelledBy == '' || isValidId(data.cancelledBy)) &&
+      (!('cancelledByName' in data) || isValidShortString(data.cancelledByName, 0, 80)) &&
+      (!('scheduledCallDate' in data) || isValidShortString(data.scheduledCallDate, 0, 20)) &&
+      (!('scheduledCallTime' in data) || isValidShortString(data.scheduledCallTime, 0, 20)) &&
+      (!('scheduledCallTopic' in data) || isValidShortString(data.scheduledCallTopic, 0, 120)) &&
+      (!('scheduledBy' in data) || data.scheduledBy == '' || isValidId(data.scheduledBy)) &&
+      (!('callHistory' in data) || (data.callHistory is list && data.callHistory.size() <= 30 && (data.callHistory.size() == 0 || data.callHistory[0] is map))) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -276,7 +287,18 @@ service cloud.firestore {
       isValidId(data.id) &&
       isValidId(data.userId) &&
       isValidId(data.senderId) &&
-      data.type in ['new_match', 'exchange_request', 'exchange_accepted', 'exchange_completed', 'new_message', 'new_review', 'system'] &&
+      data.type in [
+        'new_match',
+        'exchange_request',
+        'exchange_accepted',
+        'exchange_completed',
+        'exchange_cancelled',
+        'call_scheduled',
+        'lesson_uploaded',
+        'new_message',
+        'new_review',
+        'system'
+      ] &&
       isValidShortString(data.title, 1, 120) &&
       isValidShortString(data.body, 1, 300) &&
       isValidShortString(data.relatedId, 0, 128) &&
@@ -326,6 +348,40 @@ service cloud.firestore {
       (data.score is int && data.score >= 0 && data.score <= 5) &&
       (data.xpEarned is int && data.xpEarned == data.score * 10) &&
       data.createdAt is timestamp;
+    }
+
+    function isValidLesson(data, lessonId) {
+      return data.keys().hasAll([
+        'id', 'exchangeId', 'participants', 'teacherId', 'teacherName',
+        'studentId', 'studentName', 'title', 'videoUrl', 'thumbnailUrl',
+        'duration', 'type', 'watched', 'rating', 'comment', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'exchangeId', 'participants', 'teacherId', 'teacherName',
+        'studentId', 'studentName', 'title', 'videoUrl', 'thumbnailUrl',
+        'duration', 'type', 'watched', 'rating', 'comment', 'createdAt', 'updatedAt'
+      ]) &&
+      data.id == lessonId &&
+      isValidId(data.id) &&
+      isValidId(data.exchangeId) &&
+      isValidId(data.teacherId) &&
+      isValidId(data.studentId) &&
+      data.teacherId != data.studentId &&
+      data.participants is list &&
+      data.participants.size() == 2 &&
+      data.participants.hasAll([data.teacherId, data.studentId]) &&
+      isValidShortString(data.teacherName, 1, 80) &&
+      isValidShortString(data.studentName, 1, 80) &&
+      isValidShortString(data.title, 1, 140) &&
+      isValidShortString(data.videoUrl, 5, 2000) &&
+      isValidShortString(data.thumbnailUrl, 0, 1000) &&
+      isValidShortString(data.duration, 1, 30) &&
+      data.type in ['upload', 'link'] &&
+      data.watched is bool &&
+      (data.rating is int && data.rating >= 0 && data.rating <= 5) &&
+      isValidShortString(data.comment, 0, 600) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
     }
 
     // =========================================================
@@ -465,25 +521,47 @@ service cloud.firestore {
           isAdmin() ||
           (
             // Terminal State Locking
-            !(existing().status in ['completed', 'rejected', 'cancelled']) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) && (
+            !(existing().status in ['completed', 'rejected', 'cancelled']) && (
               // Action: Recipient accepts or rejects pending request
               (
                 existing().toUid == request.auth.uid &&
                 existing().status == 'pending' &&
-                incoming().status in ['accepted', 'rejected']
+                incoming().status in ['accepted', 'rejected'] &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
               ) ||
-              // Action: Sender cancels pending request
+              // Action: Recipient undoes an accidental accept (back to pending)
               (
-                existing().fromUid == request.auth.uid &&
-                existing().status == 'pending' &&
-                incoming().status == 'cancelled'
+                existing().toUid == request.auth.uid &&
+                existing().status == 'accepted' &&
+                incoming().status == 'pending' &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
               ) ||
-              // Action: Either participant marks accepted exchange as completed
+              // Action: Either participant cancels a pending, accepted, or in-progress request with reason
               (
                 request.auth.uid in existing().participants &&
-                existing().status == 'accepted' &&
-                incoming().status == 'completed'
+                existing().status in ['pending', 'accepted', 'in_progress'] &&
+                incoming().status == 'cancelled' &&
+                incoming().get('cancelledBy', '') == request.auth.uid &&
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'status', 'cancelReason', 'cancelledBy', 'cancelledByName', 'updatedAt'
+                ])
+              ) ||
+              // Action: Either participant schedules a live call, starts a call (-> in_progress), or logs call history
+              (
+                request.auth.uid in existing().participants &&
+                existing().status in ['accepted', 'in_progress'] &&
+                incoming().status in ['accepted', 'in_progress'] &&
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'status', 'scheduledCallDate', 'scheduledCallTime',
+                  'scheduledCallTopic', 'scheduledBy', 'callHistory', 'updatedAt'
+                ])
+              ) ||
+              // Action: Either participant marks accepted or in_progress exchange as completed
+              (
+                request.auth.uid in existing().participants &&
+                existing().status in ['accepted', 'in_progress'] &&
+                incoming().status == 'completed' &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'callHistory', 'updatedAt'])
               )
             )
           )
@@ -689,6 +767,46 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isValidId(attemptId) && isVerifiedUser() && (
         existing().userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // 12. Recorded Lesson Videos inside Exchanges
+    match /lessons/{lessonId} {
+      allow get: if isValidId(lessonId) && isSignedIn() && (
+        request.auth.uid in existing().participants || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        request.auth.uid in existing().participants || isAdmin()
+      );
+      allow create: if isValidId(lessonId) && isVerifiedUser() &&
+        isValidLesson(incoming(), lessonId) &&
+        incoming().teacherId == request.auth.uid &&
+        incoming().watched == false &&
+        incoming().rating == 0 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/exchangeRequests/$(incoming().exchangeId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/exchangeRequests/$(incoming().exchangeId)).data.participants &&
+        incoming().studentId in get(/databases/$(database)/documents/exchangeRequests/$(incoming().exchangeId)).data.participants;
+      allow update: if isValidId(lessonId) && isVerifiedUser() &&
+        isValidLesson(incoming(), lessonId) &&
+        incoming().id == existing().id &&
+        incoming().exchangeId == existing().exchangeId &&
+        incoming().teacherId == existing().teacherId &&
+        incoming().studentId == existing().studentId &&
+        incoming().participants == existing().participants &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().studentId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'watched', 'rating', 'comment', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(lessonId) && isVerifiedUser() && (
+        existing().teacherId == request.auth.uid || isAdmin()
       );
     }
   }

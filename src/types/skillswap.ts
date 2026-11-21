@@ -55,9 +55,19 @@ export interface SkillCategoryItem {
 export type ExchangeStatus =
   | "pending"
   | "accepted"
+  | "in_progress"
   | "rejected"
   | "completed"
   | "cancelled";
+
+export interface CallHistoryEntry {
+  id: string;
+  date: string;
+  durationMinutes: number;
+  topic: string;
+  recordedBy: string;
+  recordedByName: string;
+}
 
 export interface ExchangeRequest {
   id: string;
@@ -71,6 +81,14 @@ export interface ExchangeRequest {
   message: string;
   scheduleNote: string;
   status: ExchangeStatus;
+  cancelReason?: string;
+  cancelledBy?: string;
+  cancelledByName?: string;
+  scheduledCallDate?: string;
+  scheduledCallTime?: string;
+  scheduledCallTopic?: string;
+  scheduledBy?: string;
+  callHistory?: CallHistoryEntry[];
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
 }
@@ -129,6 +147,9 @@ export type NotificationType =
   | "exchange_request"
   | "exchange_accepted"
   | "exchange_completed"
+  | "exchange_cancelled"
+  | "call_scheduled"
+  | "lesson_uploaded"
   | "new_message"
   | "new_review"
   | "system";
@@ -180,9 +201,32 @@ export type WorkspaceTab =
   | "practice"
   | "leaderboard"
   | "exchanges"
+  | "lessons"
   | "messages"
   | "assistant"
   | "admin";
+
+export type LessonType = "upload" | "link";
+
+export interface LessonItem {
+  id: string;
+  exchangeId: string;
+  participants: string[];
+  teacherId: string;
+  teacherName: string;
+  studentId: string;
+  studentName: string;
+  title: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  duration: string;
+  type: LessonType;
+  watched: boolean;
+  rating: number;
+  comment: string;
+  createdAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
+}
 
 export type ExploreCategory =
   | "All"

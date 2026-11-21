@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Moon, Sun } from "lucide-react";
 import { AuthModal } from "./components/AuthModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -13,22 +13,68 @@ function parseProfilePath(pathname: string): string | null {
   return match ? match[1] : null;
 }
 
+function normalizePathname(raw: string): string {
+  if (!raw || raw === "/") return "/";
+  return raw.replace(/\/+$/, "") || "/";
+}
+
 function SkillSwapRouter() {
   const { user, loading, authError, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<"login" | "signup">("signup");
-  const [routeProfileUid, setRouteProfileUid] = useState<string | null>(() =>
-    parseProfilePath(window.location.pathname)
+  const [pathname, setPathname] = useState<string>(() =>
+    normalizePathname(window.location.pathname)
   );
+
+  const authInitializedRef = useRef(false);
+  const prevUserUidRef = useRef<string | null>(null);
+
+  const navigateTo = useCallback((targetPath: string) => {
+    const normalized = normalizePathname(targetPath);
+    if (normalizePathname(window.location.pathname) !== normalized) {
+      window.history.pushState(null, "", normalized);
+    }
+    setPathname(normalized);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   useEffect(() => {
     const onPopState = () => {
-      setRouteProfileUid(parseProfilePath(window.location.pathname));
+      setPathname(normalizePathname(window.location.pathname));
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  // Only redirect "/" -> "/dashboard" on active sign-in transitions (null -> signed-in),
+  // NEVER auto-redirect an already signed-in user visiting or refreshing "/".
+  useEffect(() => {
+    if (loading) return;
+
+    const currentUid = user?.uid ?? null;
+    if (!authInitializedRef.current) {
+      authInitializedRef.current = true;
+      prevUserUidRef.current = currentUid;
+      return;
+    }
+
+    const prevUid = prevUserUidRef.current;
+    prevUserUidRef.current = currentUid;
+
+    if (!prevUid && currentUid) {
+      setAuthModalOpen(false);
+      if (pathname === "/") {
+        navigateTo("/dashboard");
+      }
+    } else if (prevUid && !currentUid) {
+      if (pathname !== "/" && !parseProfilePath(pathname)) {
+        navigateTo("/");
+      }
+    }
+  }, [loading, user?.uid, pathname, navigateTo]);
+
+  const routeProfileUid = parseProfilePath(pathname);
 
   if (authError) {
     let readable = authError;
@@ -91,28 +137,48 @@ function SkillSwapRouter() {
     );
   }
 
-  if (user) {
+  // Keep Landing Page route "/" accessible even when logged in
+  if (pathname === "/") {
     return (
-      <WorkspaceShell
-        initialTab={routeProfileUid ? "profile" : "dashboard"}
-        initialProfileUid={routeProfileUid}
-      />
+      <>
+        <LandingPage
+          onOpenAuth={(mode) => {
+            setAuthModalMode(mode);
+            setAuthModalOpen(true);
+          }}
+          onGoDashboard={() => navigateTo("/dashboard")}
+          onGoProfile={(uid) => navigateTo(`/profile/${uid}`)}
+          onLogout={() => void logout()}
+        />
+        <AuthModal
+          isOpen={authModalOpen}
+          initialMode={authModalMode}
+          onClose={() => setAuthModalOpen(false)}
+        />
+      </>
     );
   }
 
-  // Public /profile/[userId] route accessible to everyone even when signed out
   if (routeProfileUid) {
+    if (user) {
+      return (
+        <WorkspaceShell
+          initialTab="profile"
+          initialProfileUid={routeProfileUid}
+          onGoHome={() => navigateTo("/")}
+        />
+      );
+    }
+
+    // Public /profile/[userId] route accessible to everyone even when signed out
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
         <header className="sticky top-0 z-20 h-16 px-4 sm:px-6 lg:px-8 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
           <div className="max-w-7xl mx-auto h-full flex items-center justify-between gap-4">
             <button
               type="button"
-              onClick={() => {
-                window.history.pushState(null, "", "/");
-                setRouteProfileUid(null);
-              }}
-              className="text-lg font-bold tracking-tight text-slate-900 dark:text-white font-display"
+              onClick={() => navigateTo("/")}
+              className="text-lg font-bold tracking-tight text-slate-900 dark:text-white font-display hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
             >
               SkillSwap
             </button>
@@ -157,10 +223,7 @@ function SkillSwapRouter() {
               setAuthModalMode(mode);
               setAuthModalOpen(true);
             }}
-            onBackHome={() => {
-              window.history.pushState(null, "", "/");
-              setRouteProfileUid(null);
-            }}
+            onBackHome={() => navigateTo("/")}
           />
         </main>
 
@@ -173,6 +236,15 @@ function SkillSwapRouter() {
     );
   }
 
+  if (user) {
+    return (
+      <WorkspaceShell
+        initialTab="dashboard"
+        onGoHome={() => navigateTo("/")}
+      />
+    );
+  }
+
   return (
     <>
       <LandingPage
@@ -180,6 +252,9 @@ function SkillSwapRouter() {
           setAuthModalMode(mode);
           setAuthModalOpen(true);
         }}
+        onGoDashboard={() => navigateTo("/dashboard")}
+        onGoProfile={(uid) => navigateTo(`/profile/${uid}`)}
+        onLogout={() => void logout()}
       />
       <AuthModal
         isOpen={authModalOpen}

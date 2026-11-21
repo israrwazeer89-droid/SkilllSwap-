@@ -6,6 +6,7 @@ import {
   BookOpen,
   Compass,
   Dumbbell,
+  Home,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -16,6 +17,7 @@ import {
   Sun,
   Trophy,
   User as UserIcon,
+  Video,
   X,
 } from "lucide-react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
@@ -33,6 +35,7 @@ import type {
   AiMatch,
   Conversation,
   ExchangeRequest,
+  LessonItem,
   NoteItem,
   NotificationItem,
   PracticeAttempt,
@@ -46,6 +49,7 @@ import { Avatar } from "./Avatar";
 import { ExchangesView } from "./ExchangesView";
 import { ExploreAndMatchView } from "./ExploreAndMatchView";
 import { LeaderboardView } from "./LeaderboardView";
+import { LessonPlayerView } from "./LessonPlayerView";
 import { MessagesView } from "./MessagesView";
 import {
   getNotificationMeta,
@@ -60,12 +64,14 @@ import { ProfilePageView } from "./ProfilePageView";
 interface WorkspaceShellProps {
   initialTab?: WorkspaceTab;
   initialProfileUid?: string | null;
+  onGoHome?: () => void;
   children?: React.ReactNode;
 }
 
 export function WorkspaceShell({
   initialTab = "dashboard",
   initialProfileUid = null,
+  onGoHome,
   children,
 }: WorkspaceShellProps = {}) {
   const {
@@ -86,6 +92,7 @@ export function WorkspaceShell({
     initialProfileUid
   );
   const [selectedQuizId, setSelectedQuizId] = useState<string | null>(null);
+  const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -96,6 +103,7 @@ export function WorkspaceShell({
   const [verifyMsg, setVerifyMsg] = useState("");
   const [peers, setPeers] = useState<UserProfile[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeRequest[]>([]);
+  const [lessons, setLessons] = useState<LessonItem[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [matches, setMatches] = useState<AiMatch[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -287,6 +295,24 @@ export function WorkspaceShell({
       (err) => reportListenerError(err, OperationType.LIST, "notifications")
     );
 
+    const qLessons = query(
+      collection(db, "lessons"),
+      where("participants", "array-contains", user.uid)
+    );
+    const unsubLessons = onSnapshot(
+      qLessons,
+      (snap) => {
+        const list = snap.docs
+          .map((d) => d.data() as LessonItem)
+          .sort(
+            (a, b) =>
+              (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0)
+          );
+        setLessons(list);
+      },
+      (err) => reportListenerError(err, OperationType.LIST, "lessons")
+    );
+
     return () => {
       unsubPeers();
       unsubExchanges();
@@ -296,6 +322,7 @@ export function WorkspaceShell({
       unsubNotes();
       unsubPractice();
       unsubNotifs();
+      unsubLessons();
     };
   }, [user?.uid, workspaceRetryKey]);
 
@@ -331,6 +358,16 @@ export function WorkspaceShell({
 
   if (!user) return null;
 
+  const handleGoHome = () => {
+    setSidebarOpen(false);
+    if (onGoHome) {
+      onGoHome();
+      return;
+    }
+    window.history.pushState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   const openProfile = (uid: string) => {
     setViewedProfileUid(uid);
     setActiveTab("profile");
@@ -349,13 +386,19 @@ export function WorkspaceShell({
     }
     setViewedProfileUid(null);
     setActiveTab(tab);
-    if (window.location.pathname.startsWith("/profile/")) {
-      window.history.pushState(null, "", "/");
+    if (
+      window.location.pathname.startsWith("/profile/") ||
+      window.location.pathname === "/"
+    ) {
+      window.history.pushState(null, "", "/dashboard");
     }
   };
 
   const pendingIncoming = exchanges.filter(
     (e) => e.status === "pending" && e.toUid === user.uid
+  ).length;
+  const unwatchedLessons = lessons.filter(
+    (l) => l.studentId === user.uid && !l.watched
   ).length;
   const unreadChats = conversations.filter((c) => c.unreadBy.includes(user.uid)).length;
   const unreadNotifs = notifications.filter((n) => !n.isRead).length;
@@ -376,6 +419,12 @@ export function WorkspaceShell({
       label: "Exchanges",
       icon: ArrowLeftRight,
       badge: pendingIncoming || undefined,
+    },
+    {
+      id: "lessons",
+      label: "My Lessons",
+      icon: Video,
+      badge: unwatchedLessons || undefined,
     },
     {
       id: "messages",
@@ -409,9 +458,14 @@ export function WorkspaceShell({
     } else if (
       n.type === "exchange_request" ||
       n.type === "exchange_accepted" ||
-      n.type === "exchange_completed"
+      n.type === "exchange_completed" ||
+      n.type === "exchange_cancelled" ||
+      n.type === "call_scheduled"
     ) {
       navigateTab("exchanges");
+    } else if (n.type === "lesson_uploaded") {
+      if (n.relatedId) setSelectedLessonId(n.relatedId);
+      navigateTab("lessons");
     } else if (n.type === "new_review") {
       navigateTab("profile");
     }
@@ -466,9 +520,14 @@ export function WorkspaceShell({
       >
         <div className="overflow-y-auto">
           <div className="h-16 px-5 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
-            <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-white font-display">
+            <button
+              type="button"
+              onClick={handleGoHome}
+              title="Go to SkillSwap Landing Page"
+              className="text-lg font-bold tracking-tight text-slate-900 dark:text-white font-display hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+            >
               SkillSwap
-            </span>
+            </button>
             <button
               type="button"
               onClick={() => setSidebarOpen(false)}
@@ -479,6 +538,17 @@ export function WorkspaceShell({
           </div>
 
           <nav className="p-3 space-y-1">
+            <button
+              type="button"
+              onClick={handleGoHome}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
+            >
+              <span className="flex items-center gap-3 whitespace-nowrap">
+                <Home className="w-4 h-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                Home / Landing Page
+              </span>
+            </button>
+
             {navItems.map((item) => {
               const Icon = item.icon;
               const active =
@@ -557,7 +627,14 @@ export function WorkspaceShell({
               <Menu className="w-5 h-5" />
             </button>
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400 truncate">
-              SkillSwap <span aria-hidden="true">/</span>{" "}
+              <button
+                type="button"
+                onClick={handleGoHome}
+                className="font-bold text-slate-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+              >
+                SkillSwap
+              </button>{" "}
+              <span aria-hidden="true">/</span>{" "}
               <span className="text-slate-900 dark:text-white font-semibold">
                 {activeLabel}
               </span>
@@ -771,6 +848,7 @@ export function WorkspaceShell({
                       navigateTab("practice");
                     }}
                     onOpenProfile={openProfile}
+                    onBackHome={handleGoHome}
                   />
                 )}
 
@@ -820,6 +898,7 @@ export function WorkspaceShell({
                     exchanges={exchanges}
                     peers={peers}
                     reviews={reviews}
+                    lessons={lessons}
                     onNavigate={navigateTab}
                     onSelectConversation={(id) => setSelectedConversationId(id)}
                     onPrepExchange={(promptText) => {
@@ -827,6 +906,20 @@ export function WorkspaceShell({
                       navigateTab("assistant");
                     }}
                     onOpenProfile={openProfile}
+                    onWatchLesson={(lessonId) => {
+                      setSelectedLessonId(lessonId);
+                      navigateTab("lessons");
+                    }}
+                  />
+                )}
+
+                {activeTab === "lessons" && (
+                  <LessonPlayerView
+                    lessons={lessons}
+                    exchanges={exchanges}
+                    selectedLessonId={selectedLessonId}
+                    onSelectLesson={setSelectedLessonId}
+                    onNavigate={navigateTab}
                   />
                 )}
 
@@ -856,10 +949,19 @@ export function WorkspaceShell({
       {/* Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Mobile navigation"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-5"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-6"
       >
+        <button
+          type="button"
+          onClick={handleGoHome}
+          aria-label="Home / Landing Page"
+          className="flex flex-col items-center justify-center py-2.5 px-0.5 gap-1 text-[10px] font-medium text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+        >
+          <Home className="w-4 h-4" />
+          <span className="whitespace-nowrap">Home</span>
+        </button>
         {[
-          { id: "dashboard" as const, label: "Home", icon: LayoutDashboard },
+          { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
           { id: "profile" as const, label: "Profile", icon: UserIcon },
           { id: "explore" as const, label: "Explore", icon: Compass },
           { id: "practice" as const, label: "Practice", icon: Dumbbell },
@@ -875,14 +977,14 @@ export function WorkspaceShell({
               key={item.id}
               type="button"
               onClick={() => navigateTab(item.id)}
-              className={`flex flex-col items-center justify-center py-2.5 gap-1 text-[11px] font-medium transition-colors ${
+              className={`flex flex-col items-center justify-center py-2.5 px-0.5 gap-1 text-[10px] font-medium transition-colors ${
                 isCurrent
                   ? "text-blue-600 dark:text-blue-400"
                   : "text-slate-500 dark:text-slate-400"
               }`}
             >
               <Icon className="w-4 h-4" />
-              <span>{item.label}</span>
+              <span className="whitespace-nowrap">{item.label}</span>
             </button>
           );
         })}

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   ArrowRight,
   ChevronDown,
+  LayoutDashboard,
+  LogOut,
   Menu,
   Moon,
   ShieldCheck,
@@ -10,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
+import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { db } from "../lib/firebase";
 import { DEFAULT_POPULAR_SKILLS } from "../lib/validation";
@@ -18,6 +21,9 @@ import { Avatar } from "./Avatar";
 
 interface LandingPageProps {
   onOpenAuth: (mode: "login" | "signup") => void;
+  onGoDashboard?: () => void;
+  onGoProfile?: (uid: string) => void;
+  onLogout?: () => void;
 }
 
 const HOW_IT_WORKS_STEPS = [
@@ -93,7 +99,13 @@ const FAQS = [
   },
 ];
 
-export function LandingPage({ onOpenAuth }: LandingPageProps) {
+export function LandingPage({
+  onOpenAuth,
+  onGoDashboard,
+  onGoProfile,
+  onLogout,
+}: LandingPageProps) {
+  const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [heroImgFailed, setHeroImgFailed] = useState(false);
@@ -222,20 +234,43 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
           </nav>
 
           <div className="hidden md:flex items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => onOpenAuth("login")}
-              className="px-3.5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
-            >
-              My Profile
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenAuth("signup")}
-              className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap shrink-0"
-            >
-              Get Started
-            </button>
+            {user ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onGoDashboard?.()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap shrink-0"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  <span>Go to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void (onLogout ? onLogout() : logout())}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Log Out</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onOpenAuth("login")}
+                  className="px-3.5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenAuth("signup")}
+                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors whitespace-nowrap shrink-0"
+                >
+                  Get Started
+                </button>
+              </>
+            )}
           </div>
 
           <button
@@ -286,26 +321,53 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
               FAQ
             </a>
             <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onOpenAuth("login");
-                }}
-                className="w-full py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-sm font-semibold"
-              >
-                My Profile
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onOpenAuth("signup");
-                }}
-                className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold"
-              >
-                Get Started
-              </button>
+              {user ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      onGoDashboard?.();
+                    }}
+                    className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold"
+                  >
+                    Go to Dashboard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      void (onLogout ? onLogout() : logout());
+                    }}
+                    className="w-full py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-sm font-semibold"
+                  >
+                    Log Out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      onOpenAuth("login");
+                    }}
+                    className="w-full py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-sm font-semibold"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      onOpenAuth("signup");
+                    }}
+                    className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold"
+                  >
+                    Get Started
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -353,27 +415,55 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
                 </p>
 
                 <div className="flex flex-wrap items-center gap-4 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => onOpenAuth("signup")}
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
-                  >
-                    <span>Get Started</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                  <a
-                    href="#explore-skills"
-                    className="inline-flex items-center px-5 py-3 rounded-lg border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors whitespace-nowrap shrink-0"
-                  >
-                    Explore Skills
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => onOpenAuth("login")}
-                    className="text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white underline underline-offset-4 whitespace-nowrap shrink-0"
-                  >
-                    Sign In
-                  </button>
+                  {user ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onGoDashboard?.()}
+                        className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <span>Go to Dashboard</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                      <a
+                        href="#explore-skills"
+                        className="inline-flex items-center px-5 py-3 rounded-lg border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        Explore Skills
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => onGoProfile?.(user.uid)}
+                        className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white underline underline-offset-4 whitespace-nowrap shrink-0"
+                      >
+                        My Profile
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onOpenAuth("signup")}
+                        className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <span>Get Started</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                      <a
+                        href="#explore-skills"
+                        className="inline-flex items-center px-5 py-3 rounded-lg border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        Explore Skills
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => onOpenAuth("login")}
+                        className="text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white underline underline-offset-4 whitespace-nowrap shrink-0"
+                      >
+                        Sign In
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -532,7 +622,7 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
 
                 <button
                   type="button"
-                  onClick={() => onOpenAuth("signup")}
+                  onClick={() => (user ? onGoDashboard?.() : onOpenAuth("signup"))}
                   className="self-start text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
                 >
                   <span>Find a swap partner</span>
@@ -563,17 +653,17 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => onOpenAuth("login")}
+                  onClick={() => (user ? onGoProfile?.(user.uid) : onOpenAuth("login"))}
                   className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-900 whitespace-nowrap"
                 >
                   Open My Profile
                 </button>
                 <button
                   type="button"
-                  onClick={() => onOpenAuth("signup")}
+                  onClick={() => (user ? onGoDashboard?.() : onOpenAuth("signup"))}
                   className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold whitespace-nowrap"
                 >
-                  Create Profile
+                  {user ? "Go to Dashboard" : "Create Profile"}
                 </button>
               </div>
             </div>
@@ -756,10 +846,10 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
               </div>
               <button
                 type="button"
-                onClick={() => onOpenAuth("signup")}
+                onClick={() => (user ? onGoDashboard?.() : onOpenAuth("signup"))}
                 className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold whitespace-nowrap shrink-0"
               >
-                Start First Exchange
+                {user ? "Go to Dashboard" : "Start First Exchange"}
               </button>
             </div>
           )}
@@ -949,13 +1039,32 @@ export function LandingPage({ onOpenAuth }: LandingPageProps) {
             <a href="#faq" className="hover:text-slate-900 dark:hover:text-white">
               FAQ
             </a>
-            <button
-              type="button"
-              onClick={() => onOpenAuth("login")}
-              className="hover:text-slate-900 dark:hover:text-white"
-            >
-              Sign In
-            </button>
+            {user ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onGoDashboard?.()}
+                  className="hover:text-slate-900 dark:hover:text-white"
+                >
+                  Go to Dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void (onLogout ? onLogout() : logout())}
+                  className="hover:text-slate-900 dark:hover:text-white"
+                >
+                  Log Out
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onOpenAuth("login")}
+                className="hover:text-slate-900 dark:hover:text-white"
+              >
+                Sign In
+              </button>
+            )}
             <button
               type="button"
               onClick={toggleTheme}

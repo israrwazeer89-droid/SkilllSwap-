@@ -1,10 +1,13 @@
 import {
   ArrowLeftRight,
   Bell,
+  CalendarClock,
   MessageSquare,
   Sparkles,
   Star,
+  Video,
   X,
+  XCircle,
 } from "lucide-react";
 import type { NotificationItem, NotificationType } from "../types/skillswap";
 
@@ -27,6 +30,12 @@ export function getNotificationMeta(type: NotificationType): {
       return { label: "Swap Accepted", actionLabel: "Open exchanges" };
     case "exchange_completed":
       return { label: "Swap Completed", actionLabel: "Leave review" };
+    case "exchange_cancelled":
+      return { label: "Swap Cancelled", actionLabel: "View cancelled" };
+    case "call_scheduled":
+      return { label: "Call Scheduled", actionLabel: "View call" };
+    case "lesson_uploaded":
+      return { label: "Lesson Video", actionLabel: "Watch lesson" };
     case "new_message":
       return { label: "New Message", actionLabel: "Open chat" };
     case "new_review":
@@ -50,6 +59,12 @@ export function NotificationIcon({
     case "exchange_accepted":
     case "exchange_completed":
       return <ArrowLeftRight className={`${className} text-emerald-600 dark:text-emerald-400`} />;
+    case "exchange_cancelled":
+      return <XCircle className={`${className} text-red-500 dark:text-red-400`} />;
+    case "call_scheduled":
+      return <CalendarClock className={`${className} text-blue-500 dark:text-blue-400`} />;
+    case "lesson_uploaded":
+      return <Video className={`${className} text-violet-500 dark:text-violet-400`} />;
     case "new_message":
       return <MessageSquare className={`${className} text-blue-600 dark:text-blue-400`} />;
     case "new_review":

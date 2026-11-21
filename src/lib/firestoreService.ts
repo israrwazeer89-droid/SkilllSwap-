@@ -19,9 +19,11 @@ import {
 } from "./validation";
 import type {
   AiMatch,
+  CallHistoryEntry,
   Conversation,
   ExchangeRequest,
   ExchangeStatus,
+  LessonType,
   NoteItem,
   PracticeQuiz,
   PrivateAccountInfo,
@@ -278,15 +280,25 @@ export async function updateExchangeStatus(
   nextStatus: ExchangeStatus,
   actorUid: string,
   actorName: string,
-  actorProfile?: UserProfile | null
+  actorProfile?: UserProfile | null,
+  options?: { cancelReason?: string }
 ) {
   const path = `exchangeRequests/${req.id}`;
   try {
     const batch = writeBatch(db);
-    batch.update(doc(db, "exchangeRequests", req.id), {
+    const updatePayload: Record<string, unknown> = {
       status: nextStatus,
       updatedAt: serverTimestamp(),
-    });
+    };
+
+    const cleanReason = (options?.cancelReason || "").trim().slice(0, 200);
+    if (nextStatus === "cancelled") {
+      updatePayload.cancelReason = cleanReason || "Not specified";
+      updatePayload.cancelledBy = actorUid;
+      updatePayload.cancelledByName = actorName.trim().slice(0, 80) || "Peer";
+    }
+
+    batch.update(doc(db, "exchangeRequests", req.id), updatePayload);
 
     if (nextStatus === "completed" && actorProfile) {
       const normalized = normalizeUserProfile(actorProfile);
@@ -328,11 +340,288 @@ export async function updateExchangeStatus(
         isRead: false,
         createdAt: serverTimestamp(),
       });
+    } else if (nextStatus === "cancelled") {
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: notifRef.id,
+        userId: recipientUid,
+        senderId: actorUid,
+        type: "exchange_cancelled",
+        title: `${actorName.slice(0, 50)} cancelled the exchange`.slice(0, 120),
+        body: `${cleanReason ? `Reason: ${cleanReason} · ` : ""}${req.offeredSkill} ↔ ${req.requestedSkill}`.slice(
+          0,
+          300
+        ),
+        relatedId: req.id,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
     }
 
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function scheduleExchangeCall(
+  req: ExchangeRequest,
+  params: {
+    date: string;
+    time: string;
+    topic: string;
+    actorUid: string;
+    actorName: string;
+  }
+) {
+  const path = `exchangeRequests/${req.id}`;
+  try {
+    const cleanDate = params.date.trim().slice(0, 20);
+    const cleanTime = params.time.trim().slice(0, 20);
+    const cleanTopic = params.topic.trim().slice(0, 120);
+    if (!cleanDate || !cleanTime) {
+      throw new Error("Please select both a date and time for the call.");
+    }
+
+    const batch = writeBatch(db);
+    batch.update(doc(db, "exchangeRequests", req.id), {
+      scheduledCallDate: cleanDate,
+      scheduledCallTime: cleanTime,
+      scheduledCallTopic: cleanTopic || `${req.offeredSkill} ↔ ${req.requestedSkill}`.slice(0, 120),
+      scheduledBy: params.actorUid,
+      updatedAt: serverTimestamp(),
+    });
+
+    const recipientUid = req.fromUid === params.actorUid ? req.toUid : req.fromUid;
+    const notifRef = doc(collection(db, "notifications"));
+    batch.set(notifRef, {
+      id: notifRef.id,
+      userId: recipientUid,
+      senderId: params.actorUid,
+      type: "call_scheduled",
+      title: `${params.actorName.slice(0, 45)} scheduled a live video call`,
+      body: `${cleanDate} at ${cleanTime}${cleanTopic ? ` · ${cleanTopic}` : ""}`.slice(0, 300),
+      relatedId: req.id,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function startExchangeVideoCall(req: ExchangeRequest) {
+  if (req.status !== "accepted") return;
+  const path = `exchangeRequests/${req.id}`;
+  try {
+    await updateDoc(doc(db, "exchangeRequests", req.id), {
+      status: "in_progress",
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function markExchangeSessionDone(
+  req: ExchangeRequest,
+  params: {
+    topic: string;
+    durationMinutes: number;
+    completeExchange: boolean;
+    actorUid: string;
+    actorName: string;
+    actorProfile: UserProfile;
+  }
+) {
+  const path = `exchangeRequests/${req.id}`;
+  try {
+    const cleanTopic =
+      params.topic.trim().slice(0, 120) ||
+      `${req.offeredSkill} ↔ ${req.requestedSkill}`.slice(0, 120);
+    const cleanDuration = Math.max(5, Math.min(300, Math.round(params.durationMinutes || 30)));
+    const entry: CallHistoryEntry = {
+      id: `call_${Date.now()}`,
+      date: new Date().toISOString().slice(0, 10),
+      durationMinutes: cleanDuration,
+      topic: cleanTopic,
+      recordedBy: params.actorUid,
+      recordedByName: params.actorName.trim().slice(0, 80) || "Peer",
+    };
+
+    const existingHistory = Array.isArray(req.callHistory) ? req.callHistory : [];
+    const nextHistory = [entry, ...existingHistory].slice(0, 30);
+    const nextStatus: ExchangeStatus = params.completeExchange ? "completed" : "in_progress";
+
+    const batch = writeBatch(db);
+    batch.update(doc(db, "exchangeRequests", req.id), {
+      status: nextStatus,
+      callHistory: nextHistory,
+      updatedAt: serverTimestamp(),
+    });
+
+    if (params.completeExchange) {
+      const normalized = normalizeUserProfile(params.actorProfile);
+      const hoursDelta = Math.max(0.5, Number((cleanDuration / 60).toFixed(2)));
+      const stats = computeNextActivityStats(normalized, {
+        xpGain: 50,
+        completedExchangeDelta: 1,
+        hoursLearnedDelta: hoursDelta,
+        hoursTaughtDelta: hoursDelta,
+      });
+      batch.update(doc(db, "users", params.actorUid), {
+        city: normalized.city,
+        xp: stats.xp,
+        streakDays: stats.streakDays,
+        lastActiveDate: stats.lastActiveDate,
+        hoursLearned: stats.hoursLearned,
+        hoursTaught: stats.hoursTaught,
+        badges: stats.badges,
+        weeklyActivity: stats.weeklyActivity,
+        completedExchanges: stats.completedExchanges,
+        emailVerified: normalized.emailVerified,
+        updatedAt: serverTimestamp(),
+      });
+
+      const recipientUid = req.fromUid === params.actorUid ? req.toUid : req.fromUid;
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: notifRef.id,
+        userId: recipientUid,
+        senderId: params.actorUid,
+        type: "exchange_completed",
+        title: `${params.actorName.slice(0, 45)} marked the session done (+50 XP)`,
+        body: `${cleanTopic} (${cleanDuration} min) — Exchange completed!`.slice(0, 300),
+        relatedId: req.id,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function createLessonVideo(params: {
+  exchangeId: string;
+  teacherId: string;
+  teacherName: string;
+  studentId: string;
+  studentName: string;
+  title: string;
+  videoUrl: string;
+  thumbnailUrl?: string;
+  duration: string;
+  type: LessonType;
+}): Promise<string> {
+  const lessonRef = doc(collection(db, "lessons"));
+  const path = `lessons/${lessonRef.id}`;
+  try {
+    const cleanTitle = params.title.trim().slice(0, 140);
+    const cleanUrl = params.videoUrl.trim().slice(0, 2000);
+    const cleanDuration = (params.duration.trim() || "10 min").slice(0, 30);
+    if (!cleanTitle || cleanUrl.length < 5) {
+      throw new Error("Please provide a lesson title and valid video link or file.");
+    }
+
+    const batch = writeBatch(db);
+    batch.set(lessonRef, {
+      id: lessonRef.id,
+      exchangeId: params.exchangeId,
+      participants: [params.teacherId, params.studentId],
+      teacherId: params.teacherId,
+      teacherName: params.teacherName.trim().slice(0, 80) || "Teacher",
+      studentId: params.studentId,
+      studentName: params.studentName.trim().slice(0, 80) || "Student",
+      title: cleanTitle,
+      videoUrl: cleanUrl,
+      thumbnailUrl: (params.thumbnailUrl || "").trim().slice(0, 1000),
+      duration: cleanDuration,
+      type: params.type,
+      watched: false,
+      rating: 0,
+      comment: "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    const notifRef = doc(collection(db, "notifications"));
+    batch.set(notifRef, {
+      id: notifRef.id,
+      userId: params.studentId,
+      senderId: params.teacherId,
+      type: "lesson_uploaded",
+      title: `${params.teacherName.slice(0, 45)} shared a lesson video`,
+      body: `${cleanTitle} (${cleanDuration})`.slice(0, 300),
+      relatedId: lessonRef.id,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+    return lessonRef.id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function submitLessonFeedback(params: {
+  lessonId: string;
+  watched: boolean;
+  rating: number;
+  comment: string;
+  studentUid: string;
+  studentName: string;
+  teacherId: string;
+  lessonTitle: string;
+}) {
+  const path = `lessons/${params.lessonId}`;
+  try {
+    const cleanRating = Math.max(0, Math.min(5, Math.round(params.rating)));
+    const cleanComment = params.comment.trim().slice(0, 600);
+
+    const batch = writeBatch(db);
+    batch.update(doc(db, "lessons", params.lessonId), {
+      watched: Boolean(params.watched),
+      rating: cleanRating,
+      comment: cleanComment,
+      updatedAt: serverTimestamp(),
+    });
+
+    if (cleanRating >= 1) {
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: notifRef.id,
+        userId: params.teacherId,
+        senderId: params.studentUid,
+        type: "lesson_uploaded",
+        title: `${params.studentName.slice(0, 45)} rated your lesson ${cleanRating}★`,
+        body: `${params.lessonTitle.slice(0, 80)}${cleanComment ? ` — "${cleanComment}"` : ""}`.slice(
+          0,
+          300
+        ),
+        relatedId: params.lessonId,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteLessonVideo(lessonId: string) {
+  const path = `lessons/${lessonId}`;
+  try {
+    await deleteDoc(doc(db, "lessons", lessonId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
